@@ -1,0 +1,21 @@
+# Metadata for the ComfyUI Registry (https://docs.comfy.org/registry/overview).
+[project]
+name = "comfyui-b24nodes"
+version = "0.1.0"
+description = "Custom ComfyUI nodes by b24, starting with Load Image Path: load images from any sub folder of ComfyUI/input."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Andreas Behringer" }]
+keywords = ["comfyui", "comfyui-nodes", "image", "loader"]
+# No extra dependencies: torch, numpy, Pillow and aiohttp ship with ComfyUI.
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/behringer24/ComfyUI-b24nodes"
+
+[tool.comfy]
+# TODO: set the publisher id of the ComfyUI registry account before publishing.
+PublisherId = ""
+DisplayName = "ComfyUI-b24nodes"
+Icon = ""
