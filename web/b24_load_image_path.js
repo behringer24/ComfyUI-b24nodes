@@ -37,6 +37,13 @@ const TREE_CACHE_TTL = 1500;
 let treeCache = null;
 
 /**
+ * Every live node of this type, so that the "refresh node definitions" hook can
+ * reach them. Nodes register themselves in ``setupNode`` and drop out again in
+ * ``onRemoved``.
+ */
+const liveNodes = new Set();
+
+/**
  * Normalize a folder value exactly like the python side does.
  * @param {unknown} value raw widget value
  * @returns {string} relative path, "" for the input root
@@ -265,6 +272,7 @@ function setupNode(node) {
   const imageWidget = findWidget(node, "image");
   if (!folderWidget || !imageWidget) return;
   node.b24Initialised = true;
+  liveNodes.add(node);
 
   // Picking a folder loads the images of that folder.
   const folderCallback = folderWidget.callback;
@@ -315,6 +323,30 @@ function setupNode(node) {
 app.registerExtension({
   name: "b24nodes.LoadImagePath",
 
+  /**
+   * Put the folder listings back after a "refresh node definitions" (the "r"
+   * key, or the update button in the menu).
+   *
+   * That refresh reloads /object_info and overwrites ``options.values`` of
+   * every combo widget with the list from the node definition. For this node
+   * those lists are built for the input *root*, so a node that sits in a sub
+   * folder would afterwards offer the files of the root instead of its own.
+   * This hook runs right after the overwrite - which is also the moment newly
+   * copied files are supposed to show up, so the listings are re-read from
+   * disk rather than taken from the cache.
+   */
+  async refreshComboInNodes() {
+    treeCache = null;
+    const nodes = [];
+    for (const node of liveNodes) {
+      // Nodes of a closed or replaced graph are dropped on the way past.
+      if (node.graph) nodes.push(node);
+      else liveNodes.delete(node);
+    }
+    // No forceTree: the first refresh refills the cache, the others share it.
+    await Promise.all(nodes.map((node) => refreshNode(node, { keepImage: true })));
+  },
+
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== NODE_TYPE) return;
 
@@ -337,6 +369,7 @@ app.registerExtension({
     const onRemoved = nodeType.prototype.onRemoved;
     nodeType.prototype.onRemoved = function (...args) {
       clearTimeout(this.b24RefreshTimer);
+      liveNodes.delete(this);
       if (app.nodeOutputs) delete app.nodeOutputs[this.id];
       return onRemoved?.apply(this, args);
     };

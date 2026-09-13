@@ -59,6 +59,12 @@ the new folder is selected. The selected image is shown as the node preview.
 
 ### Notes
 
+* Pressing `r` (*refresh node definitions*) re-reads the listings of the
+  selected folder. ComfyUI overwrites `options.values` of every combo widget
+  from `/object_info` during that refresh, and for this node those lists are
+  built for the input *root*; the extension hooks into `refreshComboInNodes`
+  and puts the listings of the selected folder back afterwards. So `r` is a
+  second way to pick up newly copied files, next to `⟳ reload folders`.
 * Both widget values are stored in the workflow, so a workflow keeps working
   after a restart as long as the file is still there.
 * The image list is rebuilt by the frontend, so newly copied files show up
@@ -84,7 +90,8 @@ the new folder is selected. The selected image is shown as the node preview.
 ### Compatibility
 
 Verified against ComfyUI frontend `1.49.6` (node registration, folder traversal,
-preview, workflow round trip, execution and the validation error paths).
+preview, workflow round trip, execution, the validation error paths and the
+listing repair after a node definition refresh).
 
 ## Resolution Aspect Selector
 
