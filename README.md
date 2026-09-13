@@ -57,8 +57,35 @@ the new folder is selected. The selected image is shown as the node preview.
 | `image` | `IMAGE` | The loaded image. Multi frame files (animated GIF, TIFF stacks) are returned as a batch, like the core node. |
 | `mask` | `MASK` | The inverted alpha channel, or an empty `64x64` mask when the image has none. |
 
+### Adding images
+
+Images can be put into the collection without leaving the canvas. Both routes
+use ComfyUI's own `/upload/image`, so a name that is already taken is turned
+into `shot (1).png` exactly like an upload from the core *Load Image* node, and
+the first file of a batch becomes the new selection.
+
+| Gesture | Target folder |
+| --- | --- |
+| Drop image files onto the node | the folder that is currently selected |
+| `Ctrl+V` of a clipboard bitmap, node selected | `pasted/`, created on demand - the same folder the core node uses |
+| `Ctrl+V` of a file copied in the file manager | the folder that is currently selected |
+
+The split between the last two rows is the core node's own heuristic: a bitmap
+pasted into the browser always arrives as a file called `image.png`, and only
+that name is routed to `pasted/`. A file that was copied in the file manager
+keeps its own name and is therefore treated like a drop.
+
+Non image files are ignored and handed back to ComfyUI, which keeps the usual
+"drop a workflow JSON onto the canvas" behaviour intact.
+
 ### Notes
 
+* Pressing `r` (*refresh node definitions*) re-reads the listings of the
+  selected folder. ComfyUI overwrites `options.values` of every combo widget
+  from `/object_info` during that refresh, and for this node those lists are
+  built for the input *root*; the extension hooks into `refreshComboInNodes`
+  and puts the listings of the selected folder back afterwards. So `r` is a
+  second way to pick up newly copied files, next to `⟳ reload folders`.
 * Both widget values are stored in the workflow, so a workflow keeps working
   after a restart as long as the file is still there.
 * The image list is rebuilt by the frontend, so newly copied files show up
@@ -67,7 +94,9 @@ the new folder is selected. The selected image is shown as the node preview.
   value such as `folder = "/"`, `image = "portraits/2024/shot_01.png"`.
 * The selected image is shown as the node preview. Current frontends render node
   previews from the node output store, older ones from `node.imgs`; the
-  extension feeds both.
+  extension feeds both. The node also sets `previewMediaType = "image"`, which
+  is what makes the frontend route a `Ctrl+V` to it - the fallback check looks
+  for an already loaded preview, and an empty folder has none.
 * Everything below `input/` is reachable, nothing above it, guarded in two
   layers: folder values are normalised first, so `..`, absolute paths and a
   leading drive letter can not leave the input directory, and every assembled
@@ -84,7 +113,8 @@ the new folder is selected. The selected image is shown as the node preview.
 ### Compatibility
 
 Verified against ComfyUI frontend `1.49.6` (node registration, folder traversal,
-preview, workflow round trip, execution and the validation error paths).
+preview, workflow round trip, execution, the validation error paths, drag & drop
+and paste upload, and the listing repair after a node definition refresh).
 
 ## Resolution Aspect Selector
 
