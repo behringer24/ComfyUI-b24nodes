@@ -5,6 +5,7 @@ Custom nodes for [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 | Node | Display name | Description |
 | --- | --- | --- |
 | `B24LoadImagePath` | **Load Image Path (b24)** | Load an image from any sub folder of `ComfyUI/input`. |
+| `B24ResolutionAspectSelector` | **Resolution Aspect Selector (b24)** | Turn an aspect ratio and a megapixel budget into `width`/`height`. |
 
 ## Load Image Path
 
@@ -85,6 +86,76 @@ the new folder is selected. The selected image is shown as the node preview.
 Verified against ComfyUI frontend `1.49.6` (node registration, folder traversal,
 preview, workflow round trip, execution and the validation error paths).
 
+## Resolution Aspect Selector
+
+Produces a `width`/`height` pair from an aspect ratio and a megapixel budget,
+instead of typing both numbers by hand:
+
+```
+Resolution Aspect Selector ──width──> Empty Latent Image
+                           └─height─>
+```
+
+Both outputs are plain `INT`, so they fit every node that takes a size -
+`Empty Latent Image`, `EmptySD3LatentImage`, `Image Resize`, and so on.
+
+### Widgets and inputs
+
+| Input | Kind | Purpose |
+| --- | --- | --- |
+| `image` | optional `IMAGE` input | Reference image. Only its shape is read, the pixels are ignored. While it is connected the `aspect_ratio` widget is greyed out. |
+| `aspect_ratio` | widget | `1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `16:9`, `9:16`, `21:9`, `9:21` (each with its orientation in the label). Disabled while `image` is connected. |
+| `megapixels` | widget | `FLOAT`, default `1.0`. Target size in megapixels, `1 MP = 1024 x 1024 = 1,048,576 pixels` - the way image models count it, so `1.0` at `1:1` is exactly `1024 x 1024`. |
+| `divisible_by` | widget | `8`, `12`, `16`, `20`, `24`, `28`, `32` - the step width both outputs are aligned to (8 for SD/SDXL, 16 for Flux). |
+
+### Outputs
+
+| Output | Type | Description |
+| --- | --- | --- |
+| `width` | `INT` | A multiple of `divisible_by`. |
+| `height` | `INT` | A multiple of `divisible_by`. |
+
+### How the size is picked
+
+Rounding the ideal width and height to the grid independently distorts the
+aspect ratio noticeably on coarse grids, so the node scores a handful of
+candidates around the ideal size and keeps the best one. Both errors are
+measured as log ratios, which makes them symmetric and comparable; the aspect
+error counts double, because hitting the ratio usually matters more than hitting
+the megapixel count exactly.
+
+At `megapixels = 1.0`:
+
+| Aspect | `divisible_by = 8` | `= 16` | `= 32` |
+| --- | --- | --- | --- |
+| `1:1` | 1024 x 1024 | 1024 x 1024 | 1024 x 1024 |
+| `3:2` | 1248 x 832 | 1248 x 832 | 1248 x 832 |
+| `4:3` | 1184 x 888 | 1184 x 880 | 1184 x 896 |
+| `16:9` | 1368 x 768 | 1360 x 768 | 1376 x 768 |
+| `21:9` | 1568 x 672 | 1568 x 672 | 1568 x 672 |
+
+The portrait entries are the same pairs with width and height swapped.
+
+### Notes
+
+* The unit is the binary megapixel (`1024 x 1024`), set in
+  `PIXELS_PER_MEGAPIXEL`. Change it to `1_000_000` for the decimal reading.
+* Connecting `image` disables the `aspect_ratio` widget: the frontend extension
+  sets `widget.disabled`, which is the same flag litegraph uses for a widget
+  that was replaced by an input slot - drawn at half opacity, without value text
+  or stepper arrows, and skipped during hit testing. The stored value is left
+  alone, so the widget comes back with its old selection once the image is
+  disconnected. The python side ignores `aspect_ratio` whenever an image
+  arrives, so API clients get the same behaviour without the frontend.
+* Only the shape of `image` is read, so a reference can be wired in without
+  costing anything - the tensor is not copied or converted.
+
+### Compatibility
+
+Verified against ComfyUI frontend `1.49.6` (node registration, both aspect
+sources, the widget disable on connect and disconnect, and a workflow round
+trip).
+
 ## Installation
 
 Clone the pack into the ComfyUI `custom_nodes` folder and restart ComfyUI:
@@ -105,11 +176,16 @@ b24nodes/
 ├── paths.py                      safe browsing of the input directory
 ├── routes.py                     /b24nodes/browse and /b24nodes/tree
 └── nodes/
-    └── load_image_path.py        the Load Image Path node
+    ├── load_image_path.py        the Load Image Path node
+    └── resolution_aspect_selector.py
+                                  the Resolution Aspect Selector node
 web/
-└── b24_load_image_path.js        frontend extension (folder browser, preview)
+├── b24_load_image_path.js        frontend extension (folder browser, preview)
+└── b24_resolution_aspect_selector.js
+                                  greys out aspect_ratio while image is connected
 tests/
-└── test_load_image_path.py       runs without a ComfyUI installation
+├── test_load_image_path.py       runs without a ComfyUI installation
+└── test_resolution_aspect_selector.py
 ```
 
 ### HTTP API
