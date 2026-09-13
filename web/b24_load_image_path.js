@@ -9,7 +9,8 @@
  *  - the "image" widget always shows the images of the selected folder,
  *  - the "enter" widget descends into a direct sub folder of the current one,
  *    the button walks back up, so the tree can also be traversed step by step,
- *  - the selected image is shown as the node preview.
+ *  - the selected image is shown as the node preview,
+ *  - images can be dropped onto the node or pasted into it.
  *
  * Only "folder" and "image" are serialised with the workflow; the navigation
  * widgets are added here and marked as non serialisable.
@@ -27,6 +28,16 @@ const LOG_PREFIX = "[b24nodes]";
 // value, so descending is modelled as "pick an entry, then fall back to this".
 const PICK_LABEL = "— pick to enter —";
 const EMPTY_LABEL = "— no sub folders —";
+
+// Clipboard images go to the same folder the core Load Image node uses.
+const PASTE_FOLDER = "pasted";
+const PASTED_IMAGE_EXPIRY_MS = 2000;
+
+// Uploads go through ComfyUI's own route, so dropped and pasted files land in
+// input/ exactly like an upload from the core node, including its handling of
+// name collisions.
+const UPLOAD_ROUTE = "/upload/image";
+const UPLOAD_TIMEOUT_MS = 120_000;
 
 const WIDGET_ENTER = "↓ enter sub folder";
 const WIDGET_UP = "⬆ up one level";
@@ -189,6 +200,160 @@ function clearPreview(node) {
   app.graph?.setDirtyCanvas(true);
 }
 
+/** Show a message in ComfyUI's toast area, with the console as a fallback. */
+function notify(severity, summary, detail) {
+  const toast = app.extensionManager?.toast;
+  if (toast?.add) {
+    toast.add({ severity, summary, detail, life: severity === "error" ? 6000 : 3000 });
+    return;
+  }
+  console[severity === "error" ? "error" : "info"](`${LOG_PREFIX} ${summary}: ${detail}`);
+}
+
+/** Upload filter of the core Load Image node: anything the browser calls an image. */
+const isImageFile = (file) => typeof file?.type === "string" && file.type.startsWith("image/");
+
+/**
+ * The core node's test for "this came out of the clipboard": a bitmap pasted
+ * into the browser always arrives as a file called "image.png".
+ *
+ * The freshness comparison is taken over from the core node as it stands there.
+ * ``lastModified`` is never in the future, so the difference is negative and
+ * that half of the condition always passes - which means a file genuinely
+ * named "image.png" is treated here exactly as the core node treats it.
+ */
+const isPastedFile = (file) =>
+  file.name === "image.png" && file.lastModified - Date.now() < PASTED_IMAGE_EXPIRY_MS;
+
+/**
+ * Pair the image files of a drop or a paste with the folder they belong in.
+ *
+ * Dropped files go to the folder that is currently selected. Pasted files only
+ * go to "pasted/" when they look like a clipboard bitmap; a file that was
+ * copied in the file manager keeps its name and is treated like a drop, which
+ * is the same split the core node makes.
+ *
+ * @returns {{file: File, folder: string}[]}
+ */
+function uploadEntries(node, files, { pasted = false } = {}) {
+  const current = normalizeFolder(findWidget(node, "folder")?.value);
+  return Array.from(files ?? [])
+    .filter(isImageFile)
+    .map((file) => ({
+      file,
+      folder: pasted && isPastedFile(file) ? PASTE_FOLDER : current,
+    }));
+}
+
+/**
+ * Upload one file into a folder below input/ through ComfyUI's upload route.
+ *
+ * The server creates the folder when it is missing and renames the file when
+ * the name is already taken ("shot.png" -> "shot (1).png"), so the name that
+ * ends up on disk is read back from the response rather than from the file.
+ *
+ * @returns {Promise<{folder: string, filename: string}>} where the file landed
+ */
+async function uploadImage(file, folder) {
+  const body = new FormData();
+  body.append("image", file, file.name);
+  body.append("type", "input");
+  if (folder) body.append("subfolder", folder);
+
+  const response = await api.fetchApi(UPLOAD_ROUTE, {
+    method: "POST",
+    body,
+    signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return { folder: normalizeFolder(data.subfolder ?? folder), filename: data.name };
+}
+
+/**
+ * Upload the prepared entries and select the first file that made it through.
+ *
+ * The files are sent one after another on purpose: the server picks a free
+ * name by looking at the directory, so two parallel uploads carrying the same
+ * name could both be told that the name is still available.
+ *
+ * @param {{file: File, folder: string}[]} entries what to upload and where
+ * @returns {Promise<boolean>} whether at least one file was stored
+ */
+async function uploadInto(node, entries) {
+  const folderWidget = findWidget(node, "folder");
+  const imageWidget = findWidget(node, "image");
+  if (!folderWidget || !imageWidget || !entries.length) return false;
+
+  if (node.b24Uploading) {
+    notify("warn", "Upload already running", "Wait for the current upload to finish.");
+    return false;
+  }
+  node.b24Uploading = true;
+
+  const uploaded = [];
+  try {
+    for (const { file, folder } of entries) {
+      try {
+        uploaded.push(await uploadImage(file, folder));
+      } catch (error) {
+        console.error(`${LOG_PREFIX} upload of "${file.name}" failed`, error);
+        notify("error", "Upload failed", `${file.name}: ${error?.message ?? error}`);
+      }
+    }
+  } finally {
+    node.b24Uploading = false;
+  }
+
+  if (!uploaded.length) return false;
+
+  // The first file of a drop becomes the selection, like in the core node.
+  const [first] = uploaded;
+  folderWidget.value = displayFolder(first.folder);
+  imageWidget.value = first.filename;
+  await refreshNode(node, { keepImage: true, forceTree: true });
+  return true;
+}
+
+/**
+ * Wire up drag & drop and Ctrl+V.
+ *
+ *  - dropped files land in the folder that is currently selected,
+ *  - clipboard bitmaps land in "pasted/", the folder the core node uses,
+ *  - in both cases the node switches to the first uploaded file.
+ *
+ * ``previewMediaType`` marks this as an image node. The paste dispatcher only
+ * hands the clipboard to the selected node once it recognises it as one, and
+ * without the flag that recognition depends on a preview being loaded already,
+ * which is exactly not the case for an empty folder.
+ */
+function installUploadHandlers(node) {
+  node.previewMediaType = "image";
+
+  node.onDragOver = (event) => {
+    const items = event?.dataTransfer?.items;
+    return !!items && Array.from(items).some((item) => item.kind === "file");
+  };
+
+  node.onDragDrop = async (event) => {
+    const entries = uploadEntries(node, event?.dataTransfer?.files);
+    if (!entries.length) return false;
+    return uploadInto(node, entries);
+  };
+
+  // Returning true claims the clipboard, so the frontend does not additionally
+  // drop a fresh core Load Image node onto the canvas.
+  node.pasteFiles = (files) => {
+    const entries = uploadEntries(node, files, { pasted: true });
+    if (!entries.length) return false;
+    void uploadInto(node, entries);
+    return true;
+  };
+}
+
 /**
  * Reload the folder tree and the file list of the selected folder.
  * @param {object} node the node instance
@@ -273,6 +438,7 @@ function setupNode(node) {
   if (!folderWidget || !imageWidget) return;
   node.b24Initialised = true;
   liveNodes.add(node);
+  installUploadHandlers(node);
 
   // Picking a folder loads the images of that folder.
   const folderCallback = folderWidget.callback;
@@ -370,6 +536,9 @@ app.registerExtension({
     nodeType.prototype.onRemoved = function (...args) {
       clearTimeout(this.b24RefreshTimer);
       liveNodes.delete(this);
+      this.onDragOver = undefined;
+      this.onDragDrop = undefined;
+      this.pasteFiles = undefined;
       if (app.nodeOutputs) delete app.nodeOutputs[this.id];
       return onRemoved?.apply(this, args);
     };
