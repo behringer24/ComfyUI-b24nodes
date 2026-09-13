@@ -1,13 +1,13 @@
 # Metadata for the ComfyUI Registry (https://docs.comfy.org/registry/overview).
 [project]
 name = "comfyui-b24nodes"
-version = "0.1.0"
-description = "Custom ComfyUI nodes by b24, starting with Load Image Path: load images from any sub folder of ComfyUI/input."
+version = "0.2.0"
+description = "Custom ComfyUI nodes by b24: load images from any sub folder of ComfyUI/input, and turn an aspect ratio plus a megapixel budget into a width/height pair."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "Andreas Behringer" }]
-keywords = ["comfyui", "comfyui-nodes", "image", "loader"]
+keywords = ["comfyui", "comfyui-nodes", "image", "loader", "resolution", "aspect-ratio"]
 # No extra dependencies: torch, numpy, Pillow and aiohttp ship with ComfyUI.
 dependencies = []
 
