@@ -1,0 +1,5 @@
+# Keep the repository itself on LF, no matter which platform a clone is made
+# on. The pack is developed on Windows, where git's core.autocrlf normally
+# takes care of this - but that is a per machine setting, so it is spelled out
+# here instead of relying on every contributor having it.
+* text=auto eol=lf
