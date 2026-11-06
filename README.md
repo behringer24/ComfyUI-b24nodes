@@ -6,6 +6,8 @@ Custom nodes for [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 | --- | --- | --- |
 | `B24LoadImagePath` | **Load Image Path (b24)** | Load an image from any sub folder of `ComfyUI/input`. |
 | `B24ResolutionAspectSelector` | **Resolution Aspect Selector (b24)** | Turn an aspect ratio and a megapixel budget into `width`/`height`. |
+| `B24PromptComposer` | **Prompt Composer (b24)** | Fill `{{name}}` placeholders of a prompt template from inputs. |
+| `B24ColorPicker` | **Color Picker (b24)** | Pick a color, output its name (`pastel pink`, `deep blue`, ...). |
 
 ## Load Image Path
 
@@ -186,6 +188,90 @@ Verified against ComfyUI frontend `1.49.6` (node registration, both aspect
 sources, the widget disable on connect and disconnect, and a workflow round
 trip).
 
+## Prompt Composer
+
+Builds a prompt from a template whose variable parts are written as
+placeholders, so a value that appears several times is changed in one place:
+
+```
+A {{color}} ceramic vase on a wooden table, next to a {{color}} candle,
+standing in a {{setting}}.
+```
+
+Every placeholder name gets a `STRING` input of the same name - the inputs
+follow the template while typing, no "+" button needed. Connect a core
+*String* node, a *Color Picker (b24)* or any other text output; all
+occurrences of the placeholder are replaced with that text.
+
+```
+Color Picker (b24) ──color──>   Prompt Composer ──prompt──> CLIP Text Encode (text)
+String ──────────────setting──>                 └─prompt──> other prompt inputs
+```
+
+### Inputs and outputs
+
+| Name | Kind | Purpose |
+| --- | --- | --- |
+| `template` | widget | Prompt with `{{name}}` placeholders. Names consist of letters, digits and `_` (umlauts work); spaces inside the braces are ignored, `{{ color }}` is `{{color}}`. |
+| one per placeholder | `STRING` input | The text that replaces the placeholder. |
+| `prompt` | `STRING` output | The template with every placeholder replaced. |
+
+### Notes
+
+* A placeholder without a connected input stops the run with
+  `No value connected for {{name}}` rather than sending the braces to the
+  model. An empty string is a valid value.
+* An input whose placeholder was removed from the template disappears, unless
+  a link is still attached - a half typed name would otherwise cost its link.
+  It is removed once it is disconnected and ignored by the node until then.
+* Values are inserted as they are: a value that contains `{{...}}` is not
+  expanded again.
+* The inputs are ordinary node inputs, so they are stored with the workflow.
+  ComfyUI passes every linked input to the node, which is why they do not have
+  to be declared on the python side. The flip side: ComfyUI's prompt
+  validation only follows declared inputs, so a node that feeds nothing but
+  placeholder inputs is not validated before the run - it still executes
+  normally.
+* The core *Format Text* node does something similar with fixed input names
+  (`{a}`, `{b}`, ...) and Python format syntax; this node uses the names from
+  the template instead.
+
+### Compatibility
+
+Verified against ComfyUI frontend `1.58.5` (inputs following the template while
+typing, stale inputs kept while linked, workflow round trip, connection to the
+`text` input of *CLIP Text Encode*, execution and the missing value error).
+
+## Color Picker
+
+Outputs the *name* of a color as `STRING`, ready to be wired into a prompt
+placeholder. The node shows the selected color as a swatch; clicking it opens a
+palette of 98 color names grouped by family (neutrals, browns, reds, pinks,
+oranges and yellows, greens, cyans and teals, blues, purples, metallics).
+Hovering an entry shows its name, a click selects it.
+
+*Any color → nearest name* at the bottom of the palette opens the browser's
+color picker; the chosen color is mapped to the palette entry that looks
+closest (CIE76 distance in L\*a\*b\*), e.g. `#1A2B8C` becomes `midnight blue`.
+
+The stored value is the name itself, kept in the `color` combo, so it stays
+readable in the workflow, can also be picked from the searchable dropdown, and
+API clients can send a name directly.
+
+### Notes
+
+* The palette is defined once in
+  [b24nodes/nodes/color_picker.py](b24nodes/nodes/color_picker.py) and served to
+  the frontend as `GET /api/b24nodes/colors`. Add or rename entries there.
+* Picking from the palette is recorded by undo/redo and marks the workflow as
+  modified.
+
+### Compatibility
+
+Verified against ComfyUI frontend `1.58.5` (swatch, palette popup with hover
+preview, nearest name mapping, closing on Escape and outside click, undo,
+workflow round trip and execution).
+
 ## Installation
 
 Clone the pack into the ComfyUI `custom_nodes` folder and restart ComfyUI:
@@ -204,29 +290,35 @@ __init__.py                       node mappings + WEB_DIRECTORY for ComfyUI
 b24nodes/
 ├── __init__.py                   NODE_CLASS_MAPPINGS / display names
 ├── paths.py                      safe browsing of the input directory
-├── routes.py                     /b24nodes/browse and /b24nodes/tree
+├── routes.py                     /b24nodes/browse, /tree and /colors
 └── nodes/
+    ├── color_picker.py           the Color Picker node and its palette
     ├── load_image_path.py        the Load Image Path node
+    ├── prompt_composer.py        the Prompt Composer node
     └── resolution_aspect_selector.py
                                   the Resolution Aspect Selector node
 web/
+├── b24_color_picker.js           swatch and palette popup
 ├── b24_load_image_path.js        frontend extension (folder browser, preview)
+├── b24_prompt_composer.js        one input per template placeholder
 └── b24_resolution_aspect_selector.js
                                   greys out aspect_ratio while image is connected
 tests/
 ├── test_load_image_path.py       runs without a ComfyUI installation
+├── test_prompt_composer.py       Prompt Composer and Color Picker
 └── test_resolution_aspect_selector.py
 ```
 
 ### HTTP API
 
-The frontend extension uses two read only routes that ComfyUI serves under the
+The frontend extensions use three read only routes that ComfyUI serves under the
 `/api` prefix as well:
 
 | Route | Response |
 | --- | --- |
 | `GET /api/b24nodes/tree` | `{"folders": ["portraits", "portraits/2024"], "truncated": false, "limit": 2000}` |
 | `GET /api/b24nodes/browse?folder=portraits` | `{"folder": "portraits", "parent": "", "exists": true, "folders": ["2024"], "images": ["shot_01.png"]}` |
+| `GET /api/b24nodes/colors` | `{"groups": [{"name": "Neutrals", "colors": [{"name": "white", "hex": "#FFFFFF"}, ...]}, ...]}` |
 
 ### Tests
 

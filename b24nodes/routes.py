@@ -1,4 +1,5 @@
-"""HTTP routes that back the folder browser of the ``Load Image Path`` node.
+"""HTTP routes for the frontend extensions: the folder browser of ``Load Image
+Path`` and the palette of ``Color Picker``.
 
 The routes are registered on ComfyUI's own aiohttp application, which means they
 are reachable both as ``/b24nodes/...`` and as ``/api/b24nodes/...`` (ComfyUI
@@ -13,6 +14,7 @@ import logging
 from aiohttp import web
 
 from . import paths
+from .nodes.color_picker import COLOR_GROUPS
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +37,16 @@ def _tree_payload() -> dict:
     """Every folder below the input directory, capped at ``MAX_TREE_ENTRIES``."""
     folders, truncated = paths.list_tree()
     return {"folders": folders, "truncated": truncated, "limit": paths.MAX_TREE_ENTRIES}
+
+
+def _colors_payload() -> dict:
+    """The color palette of the ``Color Picker`` node, grouped by family."""
+    return {
+        "groups": [
+            {"name": group, "colors": [{"name": name, "hex": hex_value} for name, hex_value in colors]}
+            for group, colors in COLOR_GROUPS
+        ]
+    }
 
 
 def register_routes() -> bool:
@@ -67,5 +79,10 @@ def register_routes() -> bool:
     async def tree(_request: web.Request) -> web.Response:
         """List every folder below the input directory."""
         return web.json_response(_tree_payload())
+
+    @routes.get(f"{ROUTE_PREFIX}/colors")
+    async def colors(_request: web.Request) -> web.Response:
+        """The color palette of the Color Picker node."""
+        return web.json_response(_colors_payload())
 
     return True

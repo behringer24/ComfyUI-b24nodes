@@ -2,12 +2,12 @@
 [project]
 name = "comfyui-b24nodes"
 version = "0.2.0"
-description = "Custom ComfyUI nodes by b24: load images from any sub folder of ComfyUI/input, and turn an aspect ratio plus a megapixel budget into a width/height pair."
+description = "Custom ComfyUI nodes by b24: load images from any sub folder of ComfyUI/input, turn an aspect ratio plus a megapixel budget into a width/height pair, compose prompts from templates with {{placeholders}}, and pick colors by name."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "Andreas Behringer" }]
-keywords = ["comfyui", "comfyui-nodes", "image", "loader", "resolution", "aspect-ratio"]
+keywords = ["comfyui", "comfyui-nodes", "image", "loader", "resolution", "aspect-ratio", "prompt", "template", "color"]
 # No extra dependencies: torch, numpy, Pillow and aiohttp ship with ComfyUI.
 dependencies = []
 
