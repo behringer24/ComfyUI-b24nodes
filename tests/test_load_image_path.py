@@ -13,6 +13,7 @@ Run them from the pack root with::
 from __future__ import annotations
 
 import importlib
+import io
 import os
 import sys
 import tempfile
@@ -192,6 +193,50 @@ class PathHelperTests(unittest.TestCase):
         self.assertTrue(paths.folder_exists("portraits"))
         self.assertFalse(paths.folder_exists("portraits/2024"))
         self.assertTrue(paths.folder_exists("/"))
+
+
+class RenderThumbnailTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def render(self, path: Path):
+        from PIL import Image
+
+        return Image.open(io.BytesIO(paths.render_thumbnail(str(path))))
+
+    def test_long_side_is_scaled_to_the_thumbnail_size(self):
+        thumb = self.render(write_image(self.root / "wide.png", size=(1024, 512)))
+        self.assertEqual(thumb.format, "WEBP")
+        self.assertEqual(thumb.size, (paths.THUMBNAIL_SIZE, paths.THUMBNAIL_SIZE // 2))
+
+    def test_small_images_are_not_enlarged(self):
+        thumb = self.render(write_image(self.root / "small.png", size=(40, 30)))
+        self.assertEqual(thumb.size, (40, 30))
+
+    def test_large_jpeg_uses_the_reduced_decoder(self):
+        thumb = self.render(write_image(self.root / "photo.jpg", size=(3000, 2000)))
+        self.assertEqual(thumb.size, (256, 171))
+
+    def test_exif_orientation_is_applied(self):
+        from PIL import Image
+
+        path = self.root / "rotated.jpg"
+        exif = Image.Exif()
+        exif[0x0112] = 6  # stored landscape, displayed rotated by 90 degrees
+        Image.new("RGB", (400, 200), (0, 0, 255)).save(path, exif=exif)
+        self.assertEqual(self.render(path).size, (128, 256))
+
+    def test_transparency_is_kept(self):
+        thumb = self.render(write_image(self.root / "alpha.png", mode="RGBA", color=(255, 0, 0, 0)))
+        self.assertEqual(thumb.convert("RGBA").getpixel((0, 0))[3], 0)
+
+    def test_unreadable_file_raises(self):
+        broken = self.root / "broken.png"
+        broken.write_bytes(b"not an image")
+        with self.assertRaises(OSError):
+            paths.render_thumbnail(str(broken))
 
 
 class LoadImagePathNodeTests(unittest.TestCase):

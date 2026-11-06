@@ -31,23 +31,26 @@ ComfyUI/input/
 | --- | --- | --- |
 | `folder` | yes | Every folder below `input/`, as a relative path. `/` is the input root. |
 | `image` | yes | The images inside the selected folder. |
+| `🖼 browse thumbnails` | no | Opens the thumbnail browser, see below. |
 | `↓ enter sub folder` | no | The direct children of the current folder; picking one descends into it. |
 | `⬆ up one level` | no | Jumps to the parent folder and loads its images. |
 | `⟳ reload folders` | no | Re-reads all listings from disk, e.g. after copying new files in. |
 
-Only `folder` and `image` are stored in the workflow; the three navigation
+Only `folder` and `image` are stored in the workflow; the four navigation
 widgets are added by the frontend extension and are not serialised.
 
-The node context menu (right click) additionally offers *Reload folders and
-images* and *Go to input root*.
+The node context menu (right click) additionally offers *Browse thumbnails*,
+*Reload folders and images* and *Go to input root*.
 
-Two ways to traverse the tree:
+Three ways to traverse the tree:
 
 * **direct** – open the `folder` dropdown and pick any path (the dropdown of the
   ComfyUI frontend is searchable, which is handy for large collections),
 * **step by step** – descend with `↓ enter sub folder`, walk back up with
   `⬆ up one level`. This only ever lists one level at a time, so it stays usable
-  in deep or wide trees.
+  in deep or wide trees,
+* **visual** – `🖼 browse thumbnails` opens an overlay with the images of the
+  selected folder as a grid, see [Thumbnail browser](#thumbnail-browser).
 
 Whenever the folder changes, the `image` list is reloaded and the first image of
 the new folder is selected. The selected image is shown as the node preview.
@@ -58,6 +61,33 @@ the new folder is selected. The selected image is shown as the node preview.
 | --- | --- | --- |
 | `image` | `IMAGE` | The loaded image. Multi frame files (animated GIF, TIFF stacks) are returned as a batch, like the core node. |
 | `mask` | `MASK` | The inverted alpha channel, or an empty `64x64` mask when the image has none. |
+
+### Thumbnail browser
+
+`🖼 browse thumbnails` (or *Browse thumbnails* in the context menu) opens an
+overlay with the images of the selected folder as a grid, the current image
+highlighted. Sub folders are shown as tiles as well, together with `..` for the
+parent, so the browser can walk the tree on its own - the node only changes
+once an image is clicked, which selects it and closes the overlay. The filter
+field narrows the grid down by name; `Esc`, `✕` or a click next to the panel
+close it without a change.
+
+The thumbnails come from `GET /api/b24nodes/thumbnail`, which scales an image
+down to 256 pixels on its longest side and sends it as WEBP, so a folder full of
+large photos does not load the originals. Details:
+
+* Thumbnails are only requested when their tile scrolls near the visible area,
+  so a folder with hundreds of images loads a screenful at a time.
+* The browser caches every thumbnail and revalidates it through an `ETag` built
+  from the file's modification time and size; an unchanged file is answered with
+  `304` without decoding it again. Nothing is cached on disk.
+* JPEGs are decoded at a reduced scale right away (Pillow's `draft` mode), which
+  keeps even a 4000 x 3000 photo at a few milliseconds.
+* EXIF orientation and the 32 bit integer scaling follow the node, so the
+  thumbnail looks like what the node loads. Animations show their first frame.
+* Files that can not be decoded get a `⚠` tile instead of a broken image.
+* The route resolves the file through the same two layer check as the node,
+  so it can not read anything outside of `input/`.
 
 ### Adding images
 
@@ -117,6 +147,9 @@ Non image files are ignored and handed back to ComfyUI, which keeps the usual
 Verified against ComfyUI frontend `1.49.6` (node registration, folder traversal,
 preview, workflow round trip, execution, the validation error paths, drag & drop
 and paste upload, and the listing repair after a node definition refresh).
+The thumbnail browser was verified against `1.58.5` (navigation, filter, pick
+across folders, undo/redo, lazy loading in a 300 image folder, the `⚠` tile, and
+the route's `304`, `404` and `415` answers).
 
 ## Resolution Aspect Selector
 
@@ -296,8 +329,8 @@ already ships (torch, numpy, Pillow, aiohttp).
 __init__.py                       node mappings + WEB_DIRECTORY for ComfyUI
 b24nodes/
 ├── __init__.py                   NODE_CLASS_MAPPINGS / display names
-├── paths.py                      safe browsing of the input directory
-├── routes.py                     /b24nodes/browse, /tree and /colors
+├── paths.py                      safe browsing of the input directory, thumbnails
+├── routes.py                     /b24nodes/browse, /tree, /thumbnail and /colors
 └── nodes/
     ├── color_picker.py           the Color Picker node and its palette
     ├── load_image_path.py        the Load Image Path node
@@ -306,7 +339,7 @@ b24nodes/
                                   the Resolution Aspect Selector node
 web/
 ├── b24_color_picker.js           swatch and palette popup
-├── b24_load_image_path.js        frontend extension (folder browser, preview)
+├── b24_load_image_path.js        frontend extension (folder browser, thumbnails, preview)
 ├── b24_prompt_composer.js        one input per template placeholder
 └── b24_resolution_aspect_selector.js
                                   greys out aspect_ratio while image is connected
@@ -318,13 +351,14 @@ tests/
 
 ### HTTP API
 
-The frontend extensions use three read only routes that ComfyUI serves under the
+The frontend extensions use four read only routes that ComfyUI serves under the
 `/api` prefix as well:
 
 | Route | Response |
 | --- | --- |
 | `GET /api/b24nodes/tree` | `{"folders": ["portraits", "portraits/2024"], "truncated": false, "limit": 2000}` |
 | `GET /api/b24nodes/browse?folder=portraits` | `{"folder": "portraits", "parent": "", "exists": true, "folders": ["2024"], "images": ["shot_01.png"]}` |
+| `GET /api/b24nodes/thumbnail?folder=portraits&image=shot_01.png` | WEBP image, at most 256 pixels on the longest side; `404` for a missing file, `415` for one that can not be decoded |
 | `GET /api/b24nodes/colors` | `{"groups": [{"name": "Neutrals", "colors": [{"name": "white", "hex": "#FFFFFF"}, ...]}, ...]}` |
 
 ### Tests

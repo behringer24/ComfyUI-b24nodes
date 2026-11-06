@@ -1,5 +1,5 @@
-"""HTTP routes for the frontend extensions: the folder browser of ``Load Image
-Path`` and the palette of ``Color Picker``.
+"""HTTP routes for the frontend extensions: the folder browser and the
+thumbnails of ``Load Image Path`` and the palette of ``Color Picker``.
 
 The routes are registered on ComfyUI's own aiohttp application, which means they
 are reachable both as ``/b24nodes/...`` and as ``/api/b24nodes/...`` (ComfyUI
@@ -9,9 +9,12 @@ frontend helper ``api.fetchApi`` uses).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 
 from aiohttp import web
+from PIL import Image
 
 from . import paths
 from .nodes.color_picker import COLOR_GROUPS, HAIR_GROUP
@@ -83,6 +86,34 @@ def register_routes() -> bool:
     async def tree(_request: web.Request) -> web.Response:
         """List every folder below the input directory."""
         return web.json_response(_tree_payload())
+
+    @routes.get(f"{ROUTE_PREFIX}/thumbnail")
+    async def thumbnail(request: web.Request) -> web.Response:
+        """A small WEBP preview of one image below the input directory.
+
+        The ETag is built from the file's modification time and size, so the
+        browser keeps the thumbnails and only revalidates them; an unchanged
+        file is answered with 304 without decoding it again.
+        """
+        try:
+            image_path = paths.resolve_image(request.query.get("folder", ""), request.query.get("image", ""))
+            stat = os.stat(image_path)
+        except (OSError, ValueError):
+            raise web.HTTPNotFound()
+        if not paths.is_image_file(image_path) or not os.path.isfile(image_path):
+            raise web.HTTPNotFound()
+
+        headers = {"ETag": f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"', "Cache-Control": "no-cache"}
+        if request.headers.get("If-None-Match") == headers["ETag"]:
+            return web.Response(status=304, headers=headers)
+
+        # Decoding a large image takes long enough to stall the event loop that
+        # also carries ComfyUI's progress updates, so it runs in a worker thread.
+        try:
+            body = await asyncio.get_running_loop().run_in_executor(None, paths.render_thumbnail, image_path)
+        except (OSError, ValueError, Image.DecompressionBombError):
+            raise web.HTTPUnsupportedMediaType()
+        return web.Response(body=body, content_type="image/webp", headers=headers)
 
     @routes.get(f"{ROUTE_PREFIX}/colors")
     async def colors(_request: web.Request) -> web.Response:
