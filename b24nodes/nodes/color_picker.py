@@ -5,6 +5,10 @@ from __future__ import annotations
 # Color names that read well in a prompt, grouped by family. The hex values are
 # only used by the frontend extension to draw the swatches and to map a freely
 # picked color onto the nearest name; the node itself outputs the name.
+# The hair group names natural and dyed hair colors, every entry ends in "hair"
+# so that the text cannot be mistaken for a clothing or object color. It is left
+# out when a freely picked color is mapped onto the nearest name.
+HAIR_GROUP = "Hair colors"
 COLOR_GROUPS = [
     ("Neutrals", [
         ("white", "#FFFFFF"), ("off-white", "#F5F3EC"), ("ivory", "#FFFFF0"), ("cream", "#FFFDD0"),
@@ -54,6 +58,20 @@ COLOR_GROUPS = [
     ("Metallics", [
         ("silver", "#C0C0C0"), ("gold", "#D4AF37"), ("rose gold", "#B76E79"), ("bronze", "#CD7F32"),
         ("copper", "#B87333"),
+    ]),
+    (HAIR_GROUP, [
+        ("platinum blonde hair", "#E5E1CC"), ("very light blonde hair", "#F3E5AB"), ("light blonde hair", "#E8D08A"),
+        ("blonde hair", "#D9B76A"), ("golden blonde hair", "#D4A84B"), ("honey blonde hair", "#C9954C"),
+        ("strawberry blonde hair", "#D98E5F"), ("ash blonde hair", "#B8A88A"), ("dark blonde hair", "#A98B52"),
+        ("light brown hair", "#8B6842"), ("chestnut brown hair", "#7A4B2E"), ("brunette hair", "#6B4A32"),
+        ("ash brown hair", "#6B5E52"), ("dark brown hair", "#3E2A1E"), ("espresso brown hair", "#2B1D16"),
+        ("light ginger hair", "#E3A06A"), ("ginger hair", "#C8642B"), ("copper red hair", "#B85C38"),
+        ("red hair", "#B5361F"), ("auburn hair", "#8B3A22"), ("dark auburn hair", "#5E2A1E"),
+        ("burgundy hair", "#6D1F2F"), ("black hair", "#1A1A1A"), ("jet black hair", "#0B0B0D"),
+        ("salt and pepper hair", "#7A7A7A"), ("gray hair", "#8E8E8E"), ("silver hair", "#C4C4C8"),
+        ("white hair", "#F2F2F2"), ("pastel pink hair", "#F4B6C8"), ("pink hair", "#FF6FA5"),
+        ("lavender hair", "#B9A2DD"), ("purple hair", "#7B3FA0"), ("blue hair", "#2F6FDB"),
+        ("teal hair", "#1B8A8A"), ("green hair", "#3FA34D"),
     ]),
 ]
 

@@ -246,13 +246,20 @@ typing, stale inputs kept while linked, workflow round trip, connection to the
 
 Outputs the *name* of a color as `STRING`, ready to be wired into a prompt
 placeholder. The node shows the selected color as a swatch; clicking it opens a
-palette of 98 color names grouped by family (neutrals, browns, reds, pinks,
-oranges and yellows, greens, cyans and teals, blues, purples, metallics).
+palette of 133 color names grouped by family (neutrals, browns, reds, pinks,
+oranges and yellows, greens, cyans and teals, blues, purples, metallics, hair
+colors).
 Hovering an entry shows its name, a click selects it.
 
 *Any color → nearest name* at the bottom of the palette opens the browser's
 color picker; the chosen color is mapped to the palette entry that looks
 closest (CIE76 distance in L\*a\*b\*), e.g. `#1A2B8C` becomes `midnight blue`.
+Hair colors are not candidates there.
+
+The *Hair colors* group (`blonde hair`, `strawberry blonde hair`, `dark brown hair`,
+`brunette hair`, `red hair`, `auburn hair`, `silver hair`, ...) outputs names that
+always end in `hair`, so the prompt says it is hair and not clothing. Write the
+placeholder without the word: `she has long {{hair}}, ...`.
 
 The stored value is the name itself, kept in the `color` combo, so it stays
 readable in the workflow, can also be picked from the searchable dropdown, and

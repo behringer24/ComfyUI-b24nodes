@@ -14,7 +14,7 @@ import logging
 from aiohttp import web
 
 from . import paths
-from .nodes.color_picker import COLOR_GROUPS
+from .nodes.color_picker import COLOR_GROUPS, HAIR_GROUP
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +43,11 @@ def _colors_payload() -> dict:
     """The color palette of the ``Color Picker`` node, grouped by family."""
     return {
         "groups": [
-            {"name": group, "colors": [{"name": name, "hex": hex_value} for name, hex_value in colors]}
+            {
+                "name": group,
+                "hair": group == HAIR_GROUP,
+                "colors": [{"name": name, "hex": hex_value} for name, hex_value in colors],
+            }
             for group, colors in COLOR_GROUPS
         ]
     }

@@ -20,7 +20,7 @@ const LOG_PREFIX = "[b24nodes]";
 
 let palettePromise = null;
 
-/** Fetch the palette once: ``{groups, hexByName}``. A failed request is retried later. */
+/** Fetch the palette once: ``{groups, hexByName, plainHexByName}``. A failed request is retried later. */
 function loadPalette() {
   palettePromise ??= api
     .fetchApi("/b24nodes/colors")
@@ -30,10 +30,14 @@ function loadPalette() {
     })
     .then(({ groups }) => {
       const hexByName = new Map();
+      const plainHexByName = new Map();
       for (const group of groups) {
-        for (const { name, hex } of group.colors) hexByName.set(name, hex);
+        for (const { name, hex } of group.colors) {
+          hexByName.set(name, hex);
+          if (!group.hair) plainHexByName.set(name, hex);
+        }
       }
-      return { groups, hexByName };
+      return { groups, hexByName, plainHexByName };
     })
     .catch((error) => {
       palettePromise = null;
@@ -57,12 +61,12 @@ function hexToLab(hex) {
   return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
 }
 
-/** Name of the palette color that looks closest to ``hex`` (CIE76 distance). */
+/** Name of the plain (non-hair) palette color closest to ``hex`` (CIE76 distance). */
 function nearestName(palette, hex) {
   const target = hexToLab(hex);
   let best = null;
   let bestDistance = Infinity;
-  for (const [name, candidate] of palette.hexByName) {
+  for (const [name, candidate] of palette.plainHexByName) {
     const distance = Math.hypot(...hexToLab(candidate).map((v, i) => v - target[i]));
     if (distance < bestDistance) [best, bestDistance] = [name, distance];
   }
@@ -197,10 +201,10 @@ const STYLE = `
   position: fixed; z-index: 10000; padding: 8px; border-radius: 8px;
   background: var(--comfy-menu-bg, #353535); color: var(--fg-color, #ddd);
   border: 1px solid var(--border-color, #555); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  font: 12px sans-serif; display: flex; flex-direction: column; gap: 4px;
+  font: 12px sans-serif; display: flex; flex-direction: column; gap: 4px; box-sizing: border-box; width: 342px;
 }
 .b24-color-preview { height: 28px; border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
-.b24-color-row { display: flex; gap: 3px; }
+.b24-color-row { display: flex; flex-wrap: wrap; gap: 3px; }
 .b24-color-row button {
   width: 22px; height: 22px; padding: 0; border-radius: 4px; cursor: pointer;
   border: 1px solid rgba(128, 128, 128, 0.6);

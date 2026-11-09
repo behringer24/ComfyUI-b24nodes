@@ -95,6 +95,17 @@ class ColorPickerTests(unittest.TestCase):
             for name, hex_value in colors:
                 self.assertRegex(hex_value, re.compile(r"^#[0-9A-F]{6}$"), name)
 
+    def test_hair_names_say_hair(self):
+        groups = dict(color_picker.COLOR_GROUPS)
+        hair = groups[color_picker.HAIR_GROUP]
+        self.assertTrue(hair)
+        for name, _ in hair:
+            self.assertTrue(name.endswith(" hair"), name)
+        for group, colors in color_picker.COLOR_GROUPS:
+            if group != color_picker.HAIR_GROUP:
+                for name, _ in colors:
+                    self.assertFalse(name.endswith(" hair"), name)
+
     def test_default_is_a_palette_entry(self):
         names, options = ColorPicker.INPUT_TYPES()["required"]["color"]
         self.assertIn(options["default"], names)
