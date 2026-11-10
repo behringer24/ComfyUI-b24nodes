@@ -24,10 +24,11 @@ const LIST_WIDGET = "lora_list";
 const FILTER_PROPERTY = "b24BaseFilter";
 const ALL_BASES = "All";
 const NO_LORA_LABEL = "None";
-const MIN_NODE_WIDTH = 320;
-const TOOLBAR_HEIGHT = 30;
-const ROW_HEIGHT = 26;
-const ROW_GAP = 4;
+const MIN_NODE_WIDTH = 400;
+const TOOLBAR_HEIGHT = 38;
+const ROW_HEIGHT = 30;
+const ROW_GAP = 6;
+const STRENGTH_STEP = 0.05;
 const MAX_PICKER_ENTRIES = 200;
 const LOG_PREFIX = "[b24nodes]";
 
@@ -134,34 +135,42 @@ function buildFilter(node) {
 }
 
 function buildRow(node, row) {
-  const element_ = element("div", "b24-lora-row");
-  element_.classList.toggle("off", row.on === false);
-  element_.classList.toggle("mismatch", row.lora && isMismatch(node, row.lora));
+  const line = element("div", "b24-lora-row");
+  line.classList.toggle("off", row.on === false);
+  line.classList.toggle("mismatch", row.lora && isMismatch(node, row.lora));
 
-  const toggle = element("input", "b24-lora-on");
-  toggle.type = "checkbox";
-  toggle.checked = row.on !== false;
+  const toggle = element("button", "b24-lora-on");
+  toggle.type = "button";
+  toggle.setAttribute("role", "switch");
+  toggle.setAttribute("aria-checked", String(row.on !== false));
   toggle.title = "Enable or disable this LoRA";
-  toggle.addEventListener("change", () => {
-    row.on = toggle.checked;
-    element_.classList.toggle("off", !toggle.checked);
+  toggle.addEventListener("click", () => {
+    row.on = row.on === false;
+    toggle.setAttribute("aria-checked", String(row.on));
+    line.classList.toggle("off", !row.on);
     writeRows(node);
   });
 
-  const name = element("button", "b24-lora-name", row.lora ? displayName(row.lora) : NO_LORA_LABEL);
+  const name = element("button", "b24-lora-name");
   name.type = "button";
+  name.append(
+    element("span", "b24-lora-name-text", row.lora ? displayName(row.lora) : NO_LORA_LABEL),
+    element("span", "b24-lora-chevron", "⌄"),
+  );
   const base = node.b24Catalog?.baseByName.get(row.lora);
   name.title = row.lora ? `${row.lora}${base ? ` - ${base}` : ""}` : "Click to choose a LoRA";
   name.classList.toggle("empty", !row.lora);
   name.addEventListener("click", () => showPicker(node, row, name));
 
+  // "- 1.00 +" like the number widgets of ComfyUI.
+  const stepper = element("div", "b24-lora-stepper");
+  stepper.title = "Strength for model and CLIP";
   const strength = element("input", "b24-lora-strength");
   strength.type = "number";
   strength.min = "-100";
   strength.max = "100";
-  strength.step = "0.05";
+  strength.step = String(STRENGTH_STEP);
   strength.value = Number(row.strength ?? 1).toFixed(2);
-  strength.title = "Strength for model and CLIP";
   strength.addEventListener("input", () => {
     const value = parseFloat(strength.value);
     if (!Number.isFinite(value)) return;
@@ -172,6 +181,17 @@ function buildRow(node, row) {
     strength.value = Number(row.strength ?? 1).toFixed(2);
     writeRows(node);
   });
+  const nudge = (label, direction) => {
+    const button = element("button", "b24-lora-nudge", label);
+    button.type = "button";
+    button.addEventListener("click", () => {
+      row.strength = Math.round((Number(row.strength ?? 1) + direction * STRENGTH_STEP) * 100) / 100;
+      strength.value = row.strength.toFixed(2);
+      writeRows(node);
+    });
+    return button;
+  };
+  stepper.append(nudge("−", -1), strength, nudge("+", 1));
 
   const remove = element("button", "b24-lora-remove", "✕");
   remove.type = "button";
@@ -182,8 +202,8 @@ function buildRow(node, row) {
     renderList(node);
   });
 
-  element_.append(toggle, name, strength, remove);
-  return element_;
+  line.append(toggle, name, stepper, remove);
+  return line;
 }
 
 /** Rebuild the whole list: toolbar and one row per LoRA. */
@@ -343,24 +363,36 @@ function hideDataWidget(node) {
 }
 
 const STYLE = `
-.b24-lora-list { box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: ${ROW_GAP}px; font: 12px sans-serif; color: var(--input-text, #ddd); }
+.b24-lora-list { --field: var(--component-node-widget-background, #313235); box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: ${ROW_GAP}px; font: 13px Inter, Arial, sans-serif; color: #fff; }
+.b24-lora-list button, .b24-lora-list select, .b24-lora-list input { font: inherit; color: inherit; }
 .b24-lora-toolbar { display: flex; gap: 6px; height: ${TOOLBAR_HEIGHT - ROW_GAP}px; }
-.b24-lora-row { display: flex; align-items: center; gap: 6px; height: ${ROW_HEIGHT}px; padding: 0 4px; box-sizing: border-box; border-radius: 6px; background: var(--comfy-input-bg, #222); border: 1px solid var(--border-color, #444); }
-.b24-lora-row.off .b24-lora-name, .b24-lora-row.off .b24-lora-strength { opacity: 0.45; }
+.b24-lora-filter, .b24-lora-add { height: 100%; background: var(--field); border: none; border-radius: 6px; padding: 0 10px; cursor: pointer; }
+.b24-lora-filter { flex: 1; min-width: 0; }
+.b24-lora-add { flex: none; }
+.b24-lora-add:hover { filter: brightness(1.25); }
+.b24-lora-row { display: flex; align-items: center; gap: 6px; height: ${ROW_HEIGHT}px; border-radius: 6px; border: 1px solid transparent; box-sizing: border-box; }
 .b24-lora-row.mismatch { border-color: #d9a441; }
-.b24-lora-on { margin: 0; flex: none; cursor: pointer; }
-.b24-lora-name { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: none; color: inherit; font: inherit; cursor: pointer; padding: 0 2px; }
-.b24-lora-name.empty { opacity: 0.6; font-style: italic; }
-.b24-lora-strength { flex: none; width: 58px; box-sizing: border-box; height: 20px; background: var(--comfy-menu-bg, #353535); color: inherit; border: 1px solid var(--border-color, #555); border-radius: 4px; font: inherit; text-align: right; }
-.b24-lora-remove { flex: none; width: 20px; height: 20px; padding: 0; background: none; border: none; color: inherit; opacity: 0.6; cursor: pointer; }
+.b24-lora-row.off .b24-lora-name, .b24-lora-row.off .b24-lora-stepper { opacity: 0.45; }
+.b24-lora-on { flex: none; position: relative; width: 32px; height: 18px; padding: 0; border: none; border-radius: 9px; background: #555; cursor: pointer; transition: background 0.15s; }
+.b24-lora-on::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left 0.15s; }
+.b24-lora-on[aria-checked="true"] { background: #3b82c4; }
+.b24-lora-on[aria-checked="true"]::after { left: 16px; }
+.b24-lora-name { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 4px; padding: 0 8px; background: var(--field); border: none; border-radius: 6px; text-align: left; cursor: pointer; }
+.b24-lora-name:hover, .b24-lora-stepper:hover { filter: brightness(1.15); }
+.b24-lora-name-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.b24-lora-name.empty .b24-lora-name-text { opacity: 0.6; }
+.b24-lora-chevron { flex: none; opacity: 0.6; line-height: 1; }
+.b24-lora-stepper { flex: none; width: 112px; height: 100%; display: flex; align-items: center; background: var(--field); border-radius: 6px; overflow: hidden; }
+.b24-lora-nudge { flex: none; width: 28px; height: 100%; padding: 0; background: none; border: none; opacity: 0.6; cursor: pointer; font-size: 16px; }
+.b24-lora-nudge:hover { opacity: 1; background: rgba(128, 128, 128, 0.2); }
+.b24-lora-strength { flex: 1; min-width: 0; width: 100%; height: 100%; padding: 0; background: none; border: none; text-align: center; -moz-appearance: textfield; }
+.b24-lora-strength::-webkit-inner-spin-button, .b24-lora-strength::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.b24-lora-remove { flex: none; width: 22px; height: 100%; padding: 0; background: none; border: none; opacity: 0.5; cursor: pointer; }
 .b24-lora-remove:hover { opacity: 1; }
-.b24-lora-filter { flex: 1; min-width: 0; height: 100%; background: var(--comfy-input-bg, #222); color: inherit; border: 1px solid var(--border-color, #444); border-radius: 6px; font: inherit; }
-.b24-lora-add { flex: none; height: 100%; padding: 0 10px; background: var(--comfy-input-bg, #222); color: inherit; border: 1px solid var(--border-color, #444); border-radius: 6px; font: inherit; cursor: pointer; }
-.b24-lora-add:hover { background: var(--comfy-menu-bg, #353535); }
-.b24-lora-picker { position: fixed; z-index: 10000; width: 380px; max-height: 420px; display: flex; flex-direction: column; gap: 6px; padding: 8px; box-sizing: border-box; border-radius: 8px; background: var(--comfy-menu-bg, #353535); color: var(--fg-color, #ddd); border: 1px solid var(--border-color, #555); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); font: 12px sans-serif; }
-.b24-lora-search { box-sizing: border-box; width: 100%; height: 26px; padding: 0 8px; background: var(--comfy-input-bg, #222); color: inherit; border: 1px solid var(--border-color, #555); border-radius: 6px; font: inherit; }
+.b24-lora-picker { position: fixed; z-index: 10000; width: 400px; max-height: 440px; display: flex; flex-direction: column; gap: 6px; padding: 8px; box-sizing: border-box; border-radius: 8px; background: var(--comfy-menu-bg, #353535); color: var(--fg-color, #ddd); border: 1px solid var(--border-color, #555); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); font: 13px Inter, Arial, sans-serif; }
+.b24-lora-search { box-sizing: border-box; width: 100%; height: 30px; padding: 0 10px; background: var(--component-node-widget-background, #313235); color: inherit; border: none; border-radius: 6px; font: inherit; }
 .b24-lora-results { overflow-y: auto; display: flex; flex-direction: column; }
-.b24-lora-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; padding: 4px 6px; background: none; border: none; border-radius: 4px; color: inherit; font: inherit; cursor: pointer; }
+.b24-lora-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; padding: 6px 8px; background: none; border: none; border-radius: 4px; color: inherit; font: inherit; cursor: pointer; }
 .b24-lora-item:hover, .b24-lora-item.active { background: rgba(128, 128, 128, 0.25); }
 .b24-lora-item.selected .b24-lora-item-name { font-weight: bold; }
 .b24-lora-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
