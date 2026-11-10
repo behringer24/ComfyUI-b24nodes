@@ -8,6 +8,7 @@ Custom nodes for [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 | `B24ResolutionAspectSelector` | **Resolution Aspect Selector (b24)** | Turn an aspect ratio and a megapixel budget into `width`/`height`. |
 | `B24PromptComposer` | **Prompt Composer (b24)** | Fill `{{name}}` placeholders of a prompt template from inputs. |
 | `B24ColorPicker` | **Color Picker (b24)** | Pick a color, output its name (`pastel pink`, `deep blue`, ...). |
+| `B24MultiLoraLoader` | **Multi Lora Loader (b24)** | Apply any number of LoRAs with one node, each with a switch and a strength. |
 
 ## Load Image Path
 
@@ -312,6 +313,39 @@ Verified against ComfyUI frontend `1.58.5` (swatch, palette popup with hover
 preview, nearest name mapping, closing on Escape and outside click, undo,
 workflow round trip and execution).
 
+## Multi Lora Loader
+
+Applies a list of LoRAs to a `MODEL` and a `CLIP` in one node, instead of a
+chain of *Load LoRA* nodes. `model` and `clip` are both optional.
+
+*+ Add LoRA* appends a row, *− Remove last* removes the bottom one. A row has
+
+| Widget | Purpose |
+| --- | --- |
+| `on N` | Switch the row off without losing its settings. |
+| `lora N` | LoRA file from the `loras` folder, `None` leaves the row empty. |
+| `strength N` | Strength for the model and the CLIP; negative values work. |
+
+Rows are applied top to bottom. Switched off rows, empty rows and rows with
+strength `0` are skipped, so they cost nothing.
+
+The rows are made of regular widgets, no custom canvas drawing, so the node
+looks and works the same with and without *Nodes 2.0*.
+
+### Notes
+
+* The rows are stored as JSON in a hidden `loras` string widget, e.g.
+  `[{"on": true, "lora": "style.safetensors", "strength": 0.8}]`. API clients can
+  send that string directly.
+* One strength drives model and CLIP. Separate strengths would need another
+  widget per row.
+* A LoRA that no longer exists stays visible in its row and fails when the
+  workflow runs, with the file name in the error.
+* Verified against ComfyUI frontend `1.58.5`, in the classic canvas and with
+  Nodes 2.0: adding and removing rows, workflow round trip, and that only the
+  `loras` string reaches the server. Applying LoRAs is covered by unit tests
+  with stand-ins for the ComfyUI loader, not by a run with a real model.
+
 ## Installation
 
 Clone the pack into the ComfyUI `custom_nodes` folder and restart ComfyUI:
@@ -334,17 +368,20 @@ b24nodes/
 └── nodes/
     ├── color_picker.py           the Color Picker node and its palette
     ├── load_image_path.py        the Load Image Path node
+    ├── multi_lora_loader.py      the Multi Lora Loader node
     ├── prompt_composer.py        the Prompt Composer node
     └── resolution_aspect_selector.py
                                   the Resolution Aspect Selector node
 web/
 ├── b24_color_picker.js           swatch and palette popup
 ├── b24_load_image_path.js        frontend extension (folder browser, thumbnails, preview)
+├── b24_multi_lora_loader.js      LoRA rows as regular widgets
 ├── b24_prompt_composer.js        one input per template placeholder
 └── b24_resolution_aspect_selector.js
                                   greys out aspect_ratio while image is connected
 tests/
 ├── test_load_image_path.py       runs without a ComfyUI installation
+├── test_multi_lora_loader.py     Multi Lora Loader with stand-ins for the loader
 ├── test_prompt_composer.py       Prompt Composer and Color Picker
 └── test_resolution_aspect_selector.py
 ```

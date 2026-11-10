@@ -6,6 +6,7 @@ import logging
 
 from .nodes.color_picker import ColorPicker
 from .nodes.load_image_path import LoadImagePath
+from .nodes.multi_lora_loader import MultiLoraLoader
 from .nodes.prompt_composer import PromptComposer
 from .nodes.resolution_aspect_selector import ResolutionAspectSelector
 
@@ -16,6 +17,7 @@ NODE_CLASS_MAPPINGS = {
     "B24ResolutionAspectSelector": ResolutionAspectSelector,
     "B24PromptComposer": PromptComposer,
     "B24ColorPicker": ColorPicker,
+    "B24MultiLoraLoader": MultiLoraLoader,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -23,6 +25,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "B24ResolutionAspectSelector": "Resolution Aspect Selector (b24)",
     "B24PromptComposer": "Prompt Composer (b24)",
     "B24ColorPicker": "Color Picker (b24)",
+    "B24MultiLoraLoader": "Multi Lora Loader (b24)",
 }
 
 # The HTTP API is optional: without it the nodes still load, they just lose
