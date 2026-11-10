@@ -125,6 +125,6 @@ def register_routes() -> bool:
     async def lora_list(_request: web.Request) -> web.Response:
         """Every LoRA with the base model it was trained for (``null`` when unknown)."""
         entries = await asyncio.get_running_loop().run_in_executor(None, loras.list_loras)
-        return web.json_response({"loras": entries})
+        return web.json_response({"loras": entries, "parents": loras.PARENTS})
 
     return True

@@ -5,6 +5,10 @@ differently: kohya style files carry ``ss_base_model_version`` (``krea2``,
 ``sdxl_base_v1-0``), files with a model spec carry ``modelspec.architecture``
 (``krea2/lora``, ``stable-diffusion-xl-v1-base/lora``). Files without either are
 matched by name, and fall back to ``None``.
+
+Pony and Illustrious are SDXL models, so their LoRAs say ``sdxl`` as well. They
+are told apart by the checkpoint the LoRA was trained on, a ``score_9`` tag
+(Pony only) and the file name; a LoRA with no clear hint stays plain ``SDXL``.
 """
 
 from __future__ import annotations
@@ -33,6 +37,16 @@ FAMILIES = [
     ("Qwen Image", ("qwenimage",)),
 ]
 
+# Variants of a family: they behave like their parent, but LoRAs do not carry over.
+PARENTS = {"Pony": "SDXL", "Illustrious": "SDXL"}
+
+# Spellings of the variants in text that is not squashed (checkpoint names, file
+# names). "il" only counts as a word of its own: "_IL", " IL", "ilxl".
+VARIANT_PATTERNS = {
+    "Pony": re.compile(r"pony(?!tail)|pdxl"),
+    "Illustrious": re.compile(r"illustrious|noobai|(?<![a-z0-9])il(?:xl)?(?![a-z0-9])"),
+}
+
 # (mtime_ns, size, base) per file path, so a folder is only read once.
 _cache: dict[str, tuple[int, int, str | None]] = {}
 
@@ -43,6 +57,34 @@ def family_of(text: str) -> str | None:
     for label, spellings in FAMILIES:
         if any(spelling in squashed for spelling in spellings):
             return label
+    return None
+
+
+def variants_in(text: str) -> set[str]:
+    """Which of Pony and Illustrious a checkpoint or file name points to."""
+    lowered = text.lower()
+    return {label for label, pattern in VARIANT_PATTERNS.items() if pattern.search(lowered)}
+
+
+def sdxl_variant(path: str, metadata: dict) -> str | None:
+    """Pony or Illustrious for an SDXL LoRA, ``None`` when there is no clear hint.
+
+    The sources are asked in order of reliability; the first one that names
+    exactly one variant decides, and one that names both (``..._pony_IL``) is a
+    conflict that leaves the LoRA at plain SDXL.
+    """
+    tags = metadata.get("ss_tag_frequency")
+    trained_on = " ".join(str(metadata.get(key, "")) for key in ("ss_sd_model_name", "modelspec.title"))
+    sources = (
+        {"Pony"} if isinstance(tags, str) and "score_9" in tags else set(),
+        variants_in(trained_on),
+        variants_in(os.path.splitext(os.path.basename(path))[0]),
+    )
+    for found in sources:
+        if len(found) == 1:
+            return next(iter(found))
+        if found:
+            return None
     return None
 
 
@@ -62,12 +104,18 @@ def read_metadata(path: str) -> dict:
 
 def base_model_of(path: str, metadata: dict) -> str | None:
     """Base model label of a LoRA: the metadata first, then the file name."""
+    label = None
     for key in ("modelspec.architecture", "ss_base_model_version"):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():
             # A family this module does not know still makes a usable label.
-            return family_of(value) or value.strip().removesuffix("/lora")
-    return family_of(os.path.splitext(os.path.basename(path))[0])
+            label = family_of(value) or value.strip().removesuffix("/lora")
+            break
+    else:
+        label = family_of(os.path.splitext(os.path.basename(path))[0])
+    if label in (None, "SDXL"):
+        return sdxl_variant(path, metadata) or label
+    return label
 
 
 def list_loras() -> list[dict]:

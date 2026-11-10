@@ -335,10 +335,27 @@ model, e.g. `SDXL (12)`. The base model is read from the safetensors header:
 `Krea-2/lora` all count as *Krea 2*; a base model the pack does not know keeps
 the name the file gives it.
 
+Pony and Illustrious are told apart from SDXL, although their LoRAs all say
+`sdxl`. For a LoRA that is labelled SDXL (or not labelled at all) the pack looks
+for, in this order of reliability:
+
+1. a `score_9` tag in the training tags (Pony only),
+2. the training checkpoint (`ss_sd_model_name`) and the title, e.g.
+   `ponyDiffusionV6XL`, `illustriousXL`, `noobaiXL`,
+3. the file name: `pony`, `pdxl`, `illustrious` or a standalone `IL` (`_IL`, ` IL`).
+
+The first source that names exactly one of the two decides. A source that names
+both (`..._pony_IL`) is a conflict, and the LoRA stays plain SDXL. NoobAI counts
+as Illustrious. A LoRA with no clear hint stays *SDXL*, which therefore means
+"SDXL, variant not recognised". Under a *Pony* or *Illustrious* filter the picker
+lists only that variant; a checkbox adds the plain SDXL LoRAs for the ones that
+carry no hint.
+
 * LoRAs whose base model can not be told are shown under every filter and marked
   with `?`, so nothing disappears. *All base models* shows everything.
 * A row whose LoRA belongs to a different base model than the filter gets an
-  amber border.
+  amber border. Plain SDXL under *Pony* or *Illustrious* does not, it is only
+  not known to fit.
 * The filter is a property of the node and is stored with the workflow. It only
   limits the picker; it never changes which LoRAs are applied.
 * In a folder of several hundred LoRAs, nearly all were recognised, most of them
@@ -418,7 +435,7 @@ The frontend extensions use five read only routes that ComfyUI serves under the
 | `GET /api/b24nodes/browse?folder=portraits` | `{"folder": "portraits", "parent": "", "exists": true, "folders": ["2024"], "images": ["shot_01.png"]}` |
 | `GET /api/b24nodes/thumbnail?folder=portraits&image=shot_01.png` | WEBP image, at most 256 pixels on the longest side; `404` for a missing file, `415` for one that can not be decoded |
 | `GET /api/b24nodes/colors` | `{"groups": [{"name": "Neutrals", "colors": [{"name": "white", "hex": "#FFFFFF"}, ...]}, ...]}` |
-| `GET /api/b24nodes/loras` | `{"loras": [{"name": "style.safetensors", "base": "Krea 2"}, {"name": "other.safetensors", "base": null}, ...]}` |
+| `GET /api/b24nodes/loras` | `{"loras": [{"name": "style.safetensors", "base": "Krea 2"}, {"name": "other.safetensors", "base": null}, ...], "parents": {"Pony": "SDXL", "Illustrious": "SDXL"}}` |
 
 ### Tests
 

@@ -87,6 +87,48 @@ class BaseModelTests(unittest.TestCase):
         self.assertIsNone(loras.base_model_of("style.safetensors", {"ss_base_model_version": "  "}))
 
 
+class SdxlVariantTests(unittest.TestCase):
+    SDXL = {"ss_base_model_version": "sdxl_base_v1-0"}
+
+    def base(self, name, **extra):
+        return loras.base_model_of(f"{name}.safetensors", {**self.SDXL, **extra})
+
+    def test_checkpoint_name_decides(self):
+        self.assertEqual(self.base("a", ss_sd_model_name="ponyDiffusionV6XL_v6.safetensors"), "Pony")
+        self.assertEqual(self.base("a", ss_sd_model_name="illustriousXL_v01.safetensors"), "Illustrious")
+        self.assertEqual(self.base("a", ss_sd_model_name="noobaiXL_v1.safetensors"), "Illustrious")
+
+    def test_score_tag_means_pony(self):
+        self.assertEqual(self.base("a", ss_tag_frequency='{"img": {"score_9": 12}}'), "Pony")
+
+    def test_title_counts_like_the_checkpoint(self):
+        self.assertEqual(self.base("a", **{"modelspec.title": "Bubble_Bath_XLPony"}), "Pony")
+
+    def test_file_name_is_used_when_the_header_is_silent(self):
+        self.assertEqual(self.base("pencil_sketch_IL"), "Illustrious")
+        self.assertEqual(self.base("watercolor_style_PONY"), "Pony")
+        self.assertEqual(self.base("portrait light IL"), "Illustrious")
+
+    def test_header_beats_a_conflicting_file_name(self):
+        self.assertEqual(self.base("painting_pony_IL", ss_sd_model_name="pony_V6_XL.safetensors"), "Pony")
+
+    def test_conflict_at_the_same_level_stays_sdxl(self):
+        self.assertEqual(self.base("painting_pony_IL"), "SDXL")
+
+    def test_no_hint_stays_sdxl(self):
+        self.assertEqual(self.base("style_v1", ss_sd_model_name="12345.safetensors"), "SDXL")
+
+    def test_il_must_be_a_word_of_its_own(self):
+        self.assertEqual(self.base("gilded_style"), "SDXL")
+        self.assertEqual(self.base("ponytail_style"), "SDXL")
+
+    def test_file_name_alone_is_enough_without_metadata(self):
+        self.assertEqual(loras.base_model_of("my_style_pony.safetensors", {}), "Pony")
+
+    def test_other_families_are_left_alone(self):
+        self.assertEqual(loras.base_model_of("a_IL.safetensors", {"ss_base_model_version": "krea2"}), "Krea 2")
+
+
 class ListTests(unittest.TestCase):
     def setUp(self):
         for name in os.listdir(LORA_DIR.name):

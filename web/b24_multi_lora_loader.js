@@ -41,11 +41,11 @@ function loadCatalog() {
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
       return response.json();
     })
-    .then(({ loras }) => {
+    .then(({ loras, parents }) => {
       const counts = new Map();
       for (const { base } of loras) if (base) counts.set(base, (counts.get(base) ?? 0) + 1);
       const bases = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-      return { entries: loras, baseByName: new Map(loras.map(({ name, base }) => [name, base])), bases };
+      return { entries: loras, baseByName: new Map(loras.map(({ name, base }) => [name, base])), bases, parents };
     })
     .catch((error) => {
       catalogPromise = null;
@@ -100,11 +100,17 @@ function element(tag, className, text) {
   return created;
 }
 
-/** True when a LoRA is known to be trained for another base than the filter. */
+/** The family a variant such as Pony belongs to (SDXL), if the filter is one. */
+const parentOf = (node) => node.b24Catalog?.parents?.[baseFilter(node)];
+
+/**
+ * True when a LoRA is known to be trained for another base than the filter. A
+ * LoRA of the parent family (plain SDXL under "Pony") is not known to be wrong.
+ */
 function isMismatch(node, file) {
   const filter = baseFilter(node);
   const base = node.b24Catalog?.baseByName.get(file);
-  return filter !== ALL_BASES && Boolean(base) && base !== filter;
+  return filter !== ALL_BASES && Boolean(base) && base !== filter && base !== parentOf(node);
 }
 
 /** The dropdown above the rows: "All" plus every base model found. */
@@ -211,12 +217,30 @@ function showPicker(node, row, anchor) {
 
   const catalog = node.b24Catalog;
   const filter = baseFilter(node);
+  const parent = parentOf(node);
   const popup = element("div", "b24-lora-picker");
   const search = element("input", "b24-lora-search");
   search.type = "search";
   search.placeholder = filter === ALL_BASES ? "Search LoRAs" : `Search ${filter} LoRAs`;
   const results = element("div", "b24-lora-results");
-  popup.append(search, results);
+  popup.append(search);
+
+  // LoRAs of the parent family may or may not work with a variant, so they are
+  // only listed on request.
+  let withParent = false;
+  if (parent) {
+    const label = element("label", "b24-lora-parent");
+    const checkbox = element("input");
+    checkbox.type = "checkbox";
+    checkbox.addEventListener("change", () => {
+      withParent = checkbox.checked;
+      active = 0;
+      show();
+    });
+    label.append(checkbox, ` Also show ${parent} LoRAs without a ${filter} hint`);
+    popup.append(label);
+  }
+  popup.append(results);
 
   let active = 0;
   let visible = [];
@@ -232,7 +256,8 @@ function showPicker(node, row, anchor) {
     const needle = search.value.trim().toLowerCase();
     const matches = (catalog?.entries ?? []).filter(
       ({ name, base }) =>
-        (filter === ALL_BASES || !base || base === filter) && name.toLowerCase().includes(needle),
+        (filter === ALL_BASES || !base || base === filter || (withParent && base === parent)) &&
+        name.toLowerCase().includes(needle),
     );
     visible = [{ name: "", base: null }, ...matches.slice(0, MAX_PICKER_ENTRIES)];
     active = Math.min(active, visible.length - 1);
@@ -342,6 +367,7 @@ const STYLE = `
 .b24-lora-badge { flex: none; padding: 0 6px; border-radius: 8px; background: rgba(90, 140, 220, 0.35); font-size: 11px; }
 .b24-lora-badge.unknown { background: rgba(128, 128, 128, 0.3); }
 .b24-lora-more { padding: 4px 6px; opacity: 0.7; }
+.b24-lora-parent { display: flex; align-items: center; gap: 4px; opacity: 0.85; cursor: pointer; }
 `;
 
 app.registerExtension({
