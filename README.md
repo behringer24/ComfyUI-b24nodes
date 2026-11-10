@@ -8,7 +8,7 @@ Custom nodes for [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 | `B24ResolutionAspectSelector` | **Resolution Aspect Selector (b24)** | Turn an aspect ratio and a megapixel budget into `width`/`height`. |
 | `B24PromptComposer` | **Prompt Composer (b24)** | Fill `{{name}}` placeholders of a prompt template from inputs. |
 | `B24ColorPicker` | **Color Picker (b24)** | Pick a color, output its name (`pastel pink`, `deep blue`, ...). |
-| `B24MultiLoraLoader` | **Multi Lora Loader (b24)** | Apply any number of LoRAs with one node, each with a switch and a strength. |
+| `B24MultiLoraLoader` | **Multi Lora Loader (b24)** | Apply any number of LoRAs in compact rows, with a searchable picker and a base model filter. |
 
 ## Load Image Path
 
@@ -318,33 +318,52 @@ workflow round trip and execution).
 Applies a list of LoRAs to a `MODEL` and a `CLIP` in one node, instead of a
 chain of *Load LoRA* nodes. `model` and `clip` are both optional.
 
-*+ Add LoRA* appends a row, *− Remove last* removes the bottom one. A row has
+Every LoRA is one compact row: a switch, the LoRA, its strength and a ✕ to
+remove it. *+ Add LoRA* appends a row. Rows are applied top to bottom; switched
+off rows, empty rows and rows with strength `0` are skipped. The strength is
+used for the model and the CLIP and may be negative.
 
-| Widget | Purpose |
-| --- | --- |
-| `on N` | Switch the row off without losing its settings. |
-| `lora N` | LoRA file from the `loras` folder, `None` leaves the row empty. |
-| `strength N` | Strength for the model and the CLIP; negative values work. |
+Clicking a LoRA opens a searchable picker (type to filter, arrow keys and Enter
+to choose, Escape to close).
 
-Rows are applied top to bottom. Switched off rows, empty rows and rows with
-strength `0` are skipped, so they cost nothing.
+### Filter by base model
 
-The rows are made of regular widgets, no custom canvas drawing, so the node
-looks and works the same with and without *Nodes 2.0*.
+The dropdown above the rows limits the picker to LoRAs trained for one base
+model, e.g. `SDXL (12)`. The base model is read from the safetensors header:
+`modelspec.architecture` first, then `ss_base_model_version`, then the file name
+(`..._krea2_v1.safetensors`). Spellings are merged, so `krea2`, `krea2/lora` and
+`Krea-2/lora` all count as *Krea 2*; a base model the pack does not know keeps
+the name the file gives it.
+
+* LoRAs whose base model can not be told are shown under every filter and marked
+  with `?`, so nothing disappears. *All base models* shows everything.
+* A row whose LoRA belongs to a different base model than the filter gets an
+  amber border.
+* The filter is a property of the node and is stored with the workflow. It only
+  limits the picker; it never changes which LoRAs are applied.
+* In a folder of several hundred LoRAs, nearly all were recognised, most of them
+  from the header and the rest by file name.
+
+The rows are plain DOM elements, no custom canvas drawing, so the node looks and
+works the same with and without *Nodes 2.0*.
 
 ### Notes
 
 * The rows are stored as JSON in a hidden `loras` string widget, e.g.
   `[{"on": true, "lora": "style.safetensors", "strength": 0.8}]`. API clients can
   send that string directly.
-* One strength drives model and CLIP. Separate strengths would need another
-  widget per row.
+* One strength drives model and CLIP. Separate strengths would need a second
+  number per row.
 * A LoRA that no longer exists stays visible in its row and fails when the
   workflow runs, with the file name in the error.
+* The list of LoRAs and their base models comes from `GET /api/b24nodes/loras`.
+  Headers are read once per file and cached until the file changes (about two
+  seconds for several hundred files on first use).
 * Verified against ComfyUI frontend `1.58.5`, in the classic canvas and with
-  Nodes 2.0: adding and removing rows, workflow round trip, and that only the
-  `loras` string reaches the server. Applying LoRAs is covered by unit tests
-  with stand-ins for the ComfyUI loader, not by a run with a real model.
+  Nodes 2.0: adding, removing and switching rows, the picker with search and
+  filter, workflow round trip, and that only the `loras` string reaches the
+  server. Applying LoRAs is covered by unit tests with stand-ins for the
+  ComfyUI loader, not by a run with a real model.
 
 ## Installation
 
@@ -363,8 +382,9 @@ already ships (torch, numpy, Pillow, aiohttp).
 __init__.py                       node mappings + WEB_DIRECTORY for ComfyUI
 b24nodes/
 ├── __init__.py                   NODE_CLASS_MAPPINGS / display names
+├── loras.py                      base model of a LoRA from its safetensors header
 ├── paths.py                      safe browsing of the input directory, thumbnails
-├── routes.py                     /b24nodes/browse, /tree, /thumbnail and /colors
+├── routes.py                     /b24nodes/browse, /tree, /thumbnail, /colors and /loras
 └── nodes/
     ├── color_picker.py           the Color Picker node and its palette
     ├── load_image_path.py        the Load Image Path node
@@ -375,12 +395,13 @@ b24nodes/
 web/
 ├── b24_color_picker.js           swatch and palette popup
 ├── b24_load_image_path.js        frontend extension (folder browser, thumbnails, preview)
-├── b24_multi_lora_loader.js      LoRA rows as regular widgets
+├── b24_multi_lora_loader.js      compact LoRA rows and picker
 ├── b24_prompt_composer.js        one input per template placeholder
 └── b24_resolution_aspect_selector.js
                                   greys out aspect_ratio while image is connected
 tests/
 ├── test_load_image_path.py       runs without a ComfyUI installation
+├── test_loras.py                 base model detection
 ├── test_multi_lora_loader.py     Multi Lora Loader with stand-ins for the loader
 ├── test_prompt_composer.py       Prompt Composer and Color Picker
 └── test_resolution_aspect_selector.py
@@ -388,7 +409,7 @@ tests/
 
 ### HTTP API
 
-The frontend extensions use four read only routes that ComfyUI serves under the
+The frontend extensions use five read only routes that ComfyUI serves under the
 `/api` prefix as well:
 
 | Route | Response |
@@ -397,6 +418,7 @@ The frontend extensions use four read only routes that ComfyUI serves under the
 | `GET /api/b24nodes/browse?folder=portraits` | `{"folder": "portraits", "parent": "", "exists": true, "folders": ["2024"], "images": ["shot_01.png"]}` |
 | `GET /api/b24nodes/thumbnail?folder=portraits&image=shot_01.png` | WEBP image, at most 256 pixels on the longest side; `404` for a missing file, `415` for one that can not be decoded |
 | `GET /api/b24nodes/colors` | `{"groups": [{"name": "Neutrals", "colors": [{"name": "white", "hex": "#FFFFFF"}, ...]}, ...]}` |
+| `GET /api/b24nodes/loras` | `{"loras": [{"name": "style.safetensors", "base": "Krea 2"}, {"name": "other.safetensors", "base": null}, ...]}` |
 
 ### Tests
 

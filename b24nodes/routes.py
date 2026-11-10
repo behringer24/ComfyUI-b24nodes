@@ -1,5 +1,6 @@
 """HTTP routes for the frontend extensions: the folder browser and the
-thumbnails of ``Load Image Path`` and the palette of ``Color Picker``.
+thumbnails of ``Load Image Path``, the palette of ``Color Picker`` and the LoRA
+list of ``Multi Lora Loader``.
 
 The routes are registered on ComfyUI's own aiohttp application, which means they
 are reachable both as ``/b24nodes/...`` and as ``/api/b24nodes/...`` (ComfyUI
@@ -16,7 +17,7 @@ import os
 from aiohttp import web
 from PIL import Image
 
-from . import paths
+from . import loras, paths
 from .nodes.color_picker import COLOR_GROUPS, HAIR_GROUP
 
 log = logging.getLogger(__name__)
@@ -119,5 +120,11 @@ def register_routes() -> bool:
     async def colors(_request: web.Request) -> web.Response:
         """The color palette of the Color Picker node."""
         return web.json_response(_colors_payload())
+
+    @routes.get(f"{ROUTE_PREFIX}/loras")
+    async def lora_list(_request: web.Request) -> web.Response:
+        """Every LoRA with the base model it was trained for (``null`` when unknown)."""
+        entries = await asyncio.get_running_loop().run_in_executor(None, loras.list_loras)
+        return web.json_response({"loras": entries})
 
     return True
