@@ -10,7 +10,8 @@
  *  - the "enter" widget descends into a direct sub folder of the current one,
  *    the button walks back up, so the tree can also be traversed step by step,
  *  - the selected image is shown as the node preview,
- *  - images can be dropped onto the node or pasted into it.
+ *  - images can be dropped onto the node or pasted into it,
+ *  - the thumbnail browser shows the images of a folder as a grid to pick from.
  *
  * Only "folder" and "image" are serialised with the workflow; the navigation
  * widgets are added here and marked as non serialisable.
@@ -39,6 +40,7 @@ const PASTED_IMAGE_EXPIRY_MS = 2000;
 const UPLOAD_ROUTE = "/upload/image";
 const UPLOAD_TIMEOUT_MS = 120_000;
 
+const WIDGET_THUMBNAILS = "🖼 browse thumbnails";
 const WIDGET_ENTER = "↓ enter sub folder";
 const WIDGET_UP = "⬆ up one level";
 const WIDGET_RELOAD = "⟳ reload folders";
@@ -154,6 +156,13 @@ function fetchTree(force = false) {
 function viewUrl(folder, filename) {
   const query = new URLSearchParams({ filename, type: "input", subfolder: folder });
   const route = `/view?${query.toString()}`;
+  return api.apiURL ? api.apiURL(route) : route;
+}
+
+/** URL of the thumbnail of an image inside the input directory. */
+function thumbnailUrl(folder, filename) {
+  const query = new URLSearchParams({ folder, image: filename });
+  const route = `${ROUTE_PREFIX}/thumbnail?${query.toString()}`;
   return api.apiURL ? api.apiURL(route) : route;
 }
 
@@ -430,6 +439,193 @@ function navigateTo(node, folder) {
   refreshNode(node, { keepImage: false, forceTree: true });
 }
 
+/** Select an image picked in the thumbnail browser, possibly in another folder. */
+async function pickImage(node, folder, filename) {
+  const folderWidget = findWidget(node, "folder");
+  const imageWidget = findWidget(node, "image");
+  if (!folderWidget || !imageWidget) return;
+  folderWidget.value = displayFolder(folder);
+  imageWidget.value = filename;
+  await refreshNode(node, { keepImage: true });
+  // The change tracker looks at the graph on mouseup, before the click on a
+  // thumbnail is handled - without this the pick would miss undo.
+  app.extensionManager?.workflow?.activeWorkflow?.changeTracker?.captureCanvasState?.();
+}
+
+let openBrowser = null;
+
+function closeBrowser() {
+  openBrowser?.close();
+}
+
+/** One entry of the browser grid: a thumbnail or an icon above a caption. */
+function browserTile(caption, content, onClick) {
+  const tile = document.createElement("button");
+  tile.type = "button";
+  tile.className = "b24-thumbs-tile";
+  tile.title = caption;
+  const label = document.createElement("span");
+  label.textContent = caption;
+  tile.append(content, label);
+  tile.addEventListener("click", onClick);
+  return tile;
+}
+
+function tileIcon(icon) {
+  const symbol = document.createElement("span");
+  symbol.className = "b24-thumbs-icon";
+  symbol.textContent = icon;
+  return symbol;
+}
+
+const folderTile = (icon, caption, onClick) => browserTile(caption, tileIcon(icon), onClick);
+
+/**
+ * Open the thumbnail browser on the folder that is selected on ``node``.
+ *
+ * The browser can walk the tree on its own; the node only changes once an
+ * image is picked. Thumbnails are loaded lazily as they scroll into view.
+ */
+function showBrowser(node) {
+  closeBrowser();
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "b24-thumbs-backdrop";
+  const panel = document.createElement("div");
+  panel.className = "b24-thumbs-panel";
+  const header = document.createElement("div");
+  header.className = "b24-thumbs-header";
+  const title = document.createElement("span");
+  const filter = document.createElement("input");
+  filter.type = "search";
+  filter.placeholder = "Filter by name";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "✕";
+  close.title = "Close (Esc)";
+  const grid = document.createElement("div");
+  grid.className = "b24-thumbs-grid";
+  header.append(title, filter, close);
+  panel.append(header, grid);
+  backdrop.append(panel);
+
+  // Only named tiles take part in filtering, the "up" tile always stays.
+  filter.addEventListener("input", () => {
+    const needle = filter.value.trim().toLowerCase();
+    for (const tile of grid.children) {
+      const name = tile.dataset.name;
+      tile.hidden = !!needle && name !== undefined && !name.toLowerCase().includes(needle);
+    }
+  });
+
+  let token = 0;
+  const open = async (folder) => {
+    const current = ++token;
+    title.textContent = displayFolder(folder);
+    filter.value = "";
+    let listing;
+    try {
+      listing = await browseFolder(folder);
+    } catch (error) {
+      console.error(`${LOG_PREFIX} could not list "${folder}"`, error);
+      notify("error", "Could not list folder", displayFolder(folder));
+      return;
+    }
+    if (current !== token) return;
+
+    const selected = splitImageValue(findWidget(node, "folder")?.value, findWidget(node, "image")?.value);
+    const tiles = [];
+    if (listing.parent !== null) tiles.push(folderTile("⬆", "..", () => open(listing.parent)));
+    for (const name of listing.folders) {
+      const tile = folderTile("📁", name, () => open(folder ? `${folder}/${name}` : name));
+      tile.dataset.name = name;
+      tiles.push(tile);
+    }
+    let selectedTile = null;
+    for (const name of listing.images) {
+      const image = document.createElement("img");
+      image.loading = "lazy";
+      image.decoding = "async";
+      image.src = thumbnailUrl(folder, name);
+      // Files the server can not decode answer 415; show that instead of a broken image.
+      image.addEventListener("error", () => image.replaceWith(tileIcon("⚠")), { once: true });
+      const tile = browserTile(name, image, () => {
+        closeBrowser();
+        pickImage(node, folder, name);
+      });
+      tile.dataset.name = name;
+      if (folder === selected.folder && name === selected.filename) {
+        tile.classList.add("selected");
+        selectedTile = tile;
+      }
+      tiles.push(tile);
+    }
+    grid.replaceChildren(...tiles);
+    grid.scrollTop = 0;
+    selectedTile?.scrollIntoView({ block: "center" });
+  };
+
+  const onKeyDown = (event) => {
+    if (event.key === "Escape") closeBrowser();
+  };
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) closeBrowser();
+  });
+  close.addEventListener("click", closeBrowser);
+  document.addEventListener("keydown", onKeyDown, true);
+  document.body.append(backdrop);
+  filter.focus();
+
+  openBrowser = {
+    node,
+    close() {
+      document.removeEventListener("keydown", onKeyDown, true);
+      backdrop.remove();
+      openBrowser = null;
+    },
+  };
+  open(normalizeFolder(findWidget(node, "folder")?.value));
+}
+
+const BROWSER_STYLE = `
+.b24-thumbs-backdrop {
+  position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, 0.5);
+  display: flex; align-items: center; justify-content: center;
+}
+.b24-thumbs-panel {
+  width: min(960px, 92vw); height: min(760px, 85vh); display: flex; flex-direction: column;
+  background: var(--comfy-menu-bg, #353535); color: var(--fg-color, #ddd);
+  border: 1px solid var(--border-color, #555); border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5); font: 13px sans-serif;
+}
+.b24-thumbs-header {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color, #555);
+}
+.b24-thumbs-header span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.b24-thumbs-header input {
+  width: 200px; padding: 4px 8px; border-radius: 4px; color: inherit;
+  background: var(--comfy-input-bg, #222); border: 1px solid var(--border-color, #555);
+}
+.b24-thumbs-header button { background: none; border: none; color: inherit; font-size: 16px; cursor: pointer; }
+.b24-thumbs-grid {
+  flex: 1; overflow-y: auto; padding: 12px; display: grid; gap: 10px; align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+}
+.b24-thumbs-tile {
+  display: flex; flex-direction: column; gap: 4px; padding: 4px; min-width: 0; cursor: pointer;
+  background: var(--comfy-input-bg, #222); color: inherit; font: inherit; font-size: 11px;
+  border: 2px solid transparent; border-radius: 6px;
+}
+.b24-thumbs-tile[hidden] { display: none; }
+.b24-thumbs-tile:hover { border-color: var(--border-color, #777); }
+.b24-thumbs-tile.selected { border-color: var(--fg-color, #ddd); }
+.b24-thumbs-tile img, .b24-thumbs-icon { width: 100%; aspect-ratio: 1; border-radius: 4px; }
+.b24-thumbs-tile img { object-fit: contain; }
+.b24-thumbs-icon { display: flex; align-items: center; justify-content: center; font-size: 48px; }
+.b24-thumbs-tile span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+`;
+
 /** Wire up the widget callbacks and add the navigation widgets. */
 function setupNode(node) {
   if (node.b24Initialised) return;
@@ -455,6 +651,8 @@ function setupNode(node) {
     updatePreview(node);
     return result;
   };
+
+  addTransientWidget(node, "button", WIDGET_THUMBNAILS, "", () => showBrowser(node));
 
   // Step by step traversal downwards: pick one of the direct sub folders.
   // The widget resets itself, so the same folder can be entered again later.
@@ -488,6 +686,12 @@ function setupNode(node) {
 
 app.registerExtension({
   name: "b24nodes.LoadImagePath",
+
+  setup() {
+    const style = document.createElement("style");
+    style.textContent = BROWSER_STYLE;
+    document.head.append(style);
+  },
 
   /**
    * Put the folder listings back after a "refresh node definitions" (the "r"
@@ -536,6 +740,7 @@ app.registerExtension({
     nodeType.prototype.onRemoved = function (...args) {
       clearTimeout(this.b24RefreshTimer);
       liveNodes.delete(this);
+      if (openBrowser?.node === this) closeBrowser();
       this.onDragOver = undefined;
       this.onDragDrop = undefined;
       this.pasteFiles = undefined;
@@ -548,6 +753,10 @@ app.registerExtension({
       const result = getExtraMenuOptions?.apply(this, arguments);
       const node = this;
       options?.push(
+        {
+          content: "Browse thumbnails",
+          callback: () => showBrowser(node),
+        },
         {
           content: "Reload folders and images",
           callback: () => refreshNode(node, { keepImage: true, forceTree: true }),

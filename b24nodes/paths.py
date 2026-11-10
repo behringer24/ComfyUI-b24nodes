@@ -16,10 +16,12 @@ which rejects any result that does not end up below the input root.
 
 from __future__ import annotations
 
+import io
 import os
 import re
 
 import folder_paths
+from PIL import Image, ImageOps
 
 # Image formats that ComfyUI's Pillow based loader can open.
 IMAGE_EXTENSIONS = frozenset(
@@ -46,6 +48,9 @@ ROOT_LABEL = "/"
 # that a huge input directory can not stall the frontend or the /object_info
 # response.
 MAX_TREE_ENTRIES = 2000
+
+# Longest side of the thumbnails shown by the image browser of the frontend.
+THUMBNAIL_SIZE = 256
 
 # Folders that are never offered in the UI.
 _IGNORED_FOLDERS = frozenset({"__pycache__", "$RECYCLE.BIN", "System Volume Information"})
@@ -244,3 +249,25 @@ def list_tree(limit: int = MAX_TREE_ENTRIES) -> tuple[list[str], bool]:
             break
 
     return sorted(found, key=_natural_key), truncated
+
+
+def render_thumbnail(image_path: str, size: int = THUMBNAIL_SIZE) -> bytes:
+    """WEBP thumbnail of an image file, ``size`` pixels on the longest side at most.
+
+    The orientation and the 32 bit integer scaling follow the Load Image Path
+    node, so the thumbnail looks like what the node will load. Only the first
+    frame of an animation is used.
+    """
+    with Image.open(image_path) as opened:
+        # JPEGs are decoded at a reduced scale right away, which makes large
+        # photos several times cheaper; other formats ignore the hint.
+        opened.draft(None, (size, size))
+        frame = ImageOps.exif_transpose(opened)
+        if frame.mode == "I":
+            frame = frame.point(lambda value: value * (1 / 255))
+        frame = frame.convert("RGBA")
+        frame.thumbnail((size, size))
+
+    buffer = io.BytesIO()
+    frame.save(buffer, format="WEBP", quality=80)
+    return buffer.getvalue()

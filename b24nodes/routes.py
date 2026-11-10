@@ -1,4 +1,6 @@
-"""HTTP routes that back the folder browser of the ``Load Image Path`` node.
+"""HTTP routes for the frontend extensions: the folder browser and the
+thumbnails of ``Load Image Path``, the palette of ``Color Picker`` and the LoRA
+list of ``Multi Lora Loader``.
 
 The routes are registered on ComfyUI's own aiohttp application, which means they
 are reachable both as ``/b24nodes/...`` and as ``/api/b24nodes/...`` (ComfyUI
@@ -8,11 +10,15 @@ frontend helper ``api.fetchApi`` uses).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 
 from aiohttp import web
+from PIL import Image
 
-from . import paths
+from . import loras, paths
+from .nodes.color_picker import COLOR_GROUPS, HAIR_GROUP
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +41,20 @@ def _tree_payload() -> dict:
     """Every folder below the input directory, capped at ``MAX_TREE_ENTRIES``."""
     folders, truncated = paths.list_tree()
     return {"folders": folders, "truncated": truncated, "limit": paths.MAX_TREE_ENTRIES}
+
+
+def _colors_payload() -> dict:
+    """The color palette of the ``Color Picker`` node, grouped by family."""
+    return {
+        "groups": [
+            {
+                "name": group,
+                "hair": group == HAIR_GROUP,
+                "colors": [{"name": name, "hex": hex_value} for name, hex_value in colors],
+            }
+            for group, colors in COLOR_GROUPS
+        ]
+    }
 
 
 def register_routes() -> bool:
@@ -67,5 +87,44 @@ def register_routes() -> bool:
     async def tree(_request: web.Request) -> web.Response:
         """List every folder below the input directory."""
         return web.json_response(_tree_payload())
+
+    @routes.get(f"{ROUTE_PREFIX}/thumbnail")
+    async def thumbnail(request: web.Request) -> web.Response:
+        """A small WEBP preview of one image below the input directory.
+
+        The ETag is built from the file's modification time and size, so the
+        browser keeps the thumbnails and only revalidates them; an unchanged
+        file is answered with 304 without decoding it again.
+        """
+        try:
+            image_path = paths.resolve_image(request.query.get("folder", ""), request.query.get("image", ""))
+            stat = os.stat(image_path)
+        except (OSError, ValueError):
+            raise web.HTTPNotFound()
+        if not paths.is_image_file(image_path) or not os.path.isfile(image_path):
+            raise web.HTTPNotFound()
+
+        headers = {"ETag": f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"', "Cache-Control": "no-cache"}
+        if request.headers.get("If-None-Match") == headers["ETag"]:
+            return web.Response(status=304, headers=headers)
+
+        # Decoding a large image takes long enough to stall the event loop that
+        # also carries ComfyUI's progress updates, so it runs in a worker thread.
+        try:
+            body = await asyncio.get_running_loop().run_in_executor(None, paths.render_thumbnail, image_path)
+        except (OSError, ValueError, Image.DecompressionBombError):
+            raise web.HTTPUnsupportedMediaType()
+        return web.Response(body=body, content_type="image/webp", headers=headers)
+
+    @routes.get(f"{ROUTE_PREFIX}/colors")
+    async def colors(_request: web.Request) -> web.Response:
+        """The color palette of the Color Picker node."""
+        return web.json_response(_colors_payload())
+
+    @routes.get(f"{ROUTE_PREFIX}/loras")
+    async def lora_list(_request: web.Request) -> web.Response:
+        """Every LoRA with the base model it was trained for (``null`` when unknown)."""
+        entries = await asyncio.get_running_loop().run_in_executor(None, loras.list_loras)
+        return web.json_response({"loras": entries, "parents": loras.PARENTS})
 
     return True

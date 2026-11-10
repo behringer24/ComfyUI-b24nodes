@@ -6,6 +6,9 @@ Custom nodes for [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 | --- | --- | --- |
 | `B24LoadImagePath` | **Load Image Path (b24)** | Load an image from any sub folder of `ComfyUI/input`. |
 | `B24ResolutionAspectSelector` | **Resolution Aspect Selector (b24)** | Turn an aspect ratio and a megapixel budget into `width`/`height`. |
+| `B24PromptComposer` | **Prompt Composer (b24)** | Fill `{{name}}` placeholders of a prompt template from inputs. |
+| `B24ColorPicker` | **Color Picker (b24)** | Pick a color, output its name (`pastel pink`, `deep blue`, ...). |
+| `B24MultiLoraLoader` | **Multi Lora Loader (b24)** | Apply any number of LoRAs in compact rows, with a searchable picker and a base model filter. |
 
 ## Load Image Path
 
@@ -29,23 +32,26 @@ ComfyUI/input/
 | --- | --- | --- |
 | `folder` | yes | Every folder below `input/`, as a relative path. `/` is the input root. |
 | `image` | yes | The images inside the selected folder. |
+| `🖼 browse thumbnails` | no | Opens the thumbnail browser, see below. |
 | `↓ enter sub folder` | no | The direct children of the current folder; picking one descends into it. |
 | `⬆ up one level` | no | Jumps to the parent folder and loads its images. |
 | `⟳ reload folders` | no | Re-reads all listings from disk, e.g. after copying new files in. |
 
-Only `folder` and `image` are stored in the workflow; the three navigation
+Only `folder` and `image` are stored in the workflow; the four navigation
 widgets are added by the frontend extension and are not serialised.
 
-The node context menu (right click) additionally offers *Reload folders and
-images* and *Go to input root*.
+The node context menu (right click) additionally offers *Browse thumbnails*,
+*Reload folders and images* and *Go to input root*.
 
-Two ways to traverse the tree:
+Three ways to traverse the tree:
 
 * **direct** – open the `folder` dropdown and pick any path (the dropdown of the
   ComfyUI frontend is searchable, which is handy for large collections),
 * **step by step** – descend with `↓ enter sub folder`, walk back up with
   `⬆ up one level`. This only ever lists one level at a time, so it stays usable
-  in deep or wide trees.
+  in deep or wide trees,
+* **visual** – `🖼 browse thumbnails` opens an overlay with the images of the
+  selected folder as a grid, see [Thumbnail browser](#thumbnail-browser).
 
 Whenever the folder changes, the `image` list is reloaded and the first image of
 the new folder is selected. The selected image is shown as the node preview.
@@ -56,6 +62,33 @@ the new folder is selected. The selected image is shown as the node preview.
 | --- | --- | --- |
 | `image` | `IMAGE` | The loaded image. Multi frame files (animated GIF, TIFF stacks) are returned as a batch, like the core node. |
 | `mask` | `MASK` | The inverted alpha channel, or an empty `64x64` mask when the image has none. |
+
+### Thumbnail browser
+
+`🖼 browse thumbnails` (or *Browse thumbnails* in the context menu) opens an
+overlay with the images of the selected folder as a grid, the current image
+highlighted. Sub folders are shown as tiles as well, together with `..` for the
+parent, so the browser can walk the tree on its own - the node only changes
+once an image is clicked, which selects it and closes the overlay. The filter
+field narrows the grid down by name; `Esc`, `✕` or a click next to the panel
+close it without a change.
+
+The thumbnails come from `GET /api/b24nodes/thumbnail`, which scales an image
+down to 256 pixels on its longest side and sends it as WEBP, so a folder full of
+large photos does not load the originals. Details:
+
+* Thumbnails are only requested when their tile scrolls near the visible area,
+  so a folder with hundreds of images loads a screenful at a time.
+* The browser caches every thumbnail and revalidates it through an `ETag` built
+  from the file's modification time and size; an unchanged file is answered with
+  `304` without decoding it again. Nothing is cached on disk.
+* JPEGs are decoded at a reduced scale right away (Pillow's `draft` mode), which
+  keeps even a 4000 x 3000 photo at a few milliseconds.
+* EXIF orientation and the 32 bit integer scaling follow the node, so the
+  thumbnail looks like what the node loads. Animations show their first frame.
+* Files that can not be decoded get a `⚠` tile instead of a broken image.
+* The route resolves the file through the same two layer check as the node,
+  so it can not read anything outside of `input/`.
 
 ### Adding images
 
@@ -115,6 +148,9 @@ Non image files are ignored and handed back to ComfyUI, which keeps the usual
 Verified against ComfyUI frontend `1.49.6` (node registration, folder traversal,
 preview, workflow round trip, execution, the validation error paths, drag & drop
 and paste upload, and the listing repair after a node definition refresh).
+The thumbnail browser was verified against `1.58.5` (navigation, filter, pick
+across folders, undo/redo, lazy loading in a 300 image folder, the `⚠` tile, and
+the route's `304`, `404` and `415` answers).
 
 ## Resolution Aspect Selector
 
@@ -186,6 +222,166 @@ Verified against ComfyUI frontend `1.49.6` (node registration, both aspect
 sources, the widget disable on connect and disconnect, and a workflow round
 trip).
 
+## Prompt Composer
+
+Builds a prompt from a template whose variable parts are written as
+placeholders, so a value that appears several times is changed in one place:
+
+```
+A {{color}} ceramic vase on a wooden table, next to a {{color}} candle,
+standing in a {{setting}}.
+```
+
+Every placeholder name gets a `STRING` input of the same name - the inputs
+follow the template while typing, no "+" button needed. Connect a core
+*String* node, a *Color Picker (b24)* or any other text output; all
+occurrences of the placeholder are replaced with that text.
+
+```
+Color Picker (b24) ──color──>   Prompt Composer ──prompt──> CLIP Text Encode (text)
+String ──────────────setting──>                 └─prompt──> other prompt inputs
+```
+
+### Inputs and outputs
+
+| Name | Kind | Purpose |
+| --- | --- | --- |
+| `template` | widget | Prompt with `{{name}}` placeholders. Names consist of letters, digits and `_` (umlauts work); spaces inside the braces are ignored, `{{ color }}` is `{{color}}`. |
+| one per placeholder | `STRING` input | The text that replaces the placeholder. |
+| `prompt` | `STRING` output | The template with every placeholder replaced. |
+
+### Notes
+
+* A placeholder without a connected input stops the run with
+  `No value connected for {{name}}` rather than sending the braces to the
+  model. An empty string is a valid value.
+* An input whose placeholder was removed from the template disappears, unless
+  a link is still attached - a half typed name would otherwise cost its link.
+  It is removed once it is disconnected and ignored by the node until then.
+* Values are inserted as they are: a value that contains `{{...}}` is not
+  expanded again.
+* The inputs are ordinary node inputs, so they are stored with the workflow.
+  ComfyUI passes every linked input to the node, which is why they do not have
+  to be declared on the python side. The flip side: ComfyUI's prompt
+  validation only follows declared inputs, so a node that feeds nothing but
+  placeholder inputs is not validated before the run - it still executes
+  normally.
+* The core *Format Text* node does something similar with fixed input names
+  (`{a}`, `{b}`, ...) and Python format syntax; this node uses the names from
+  the template instead.
+
+### Compatibility
+
+Verified against ComfyUI frontend `1.58.5` (inputs following the template while
+typing, stale inputs kept while linked, workflow round trip, connection to the
+`text` input of *CLIP Text Encode*, execution and the missing value error).
+
+## Color Picker
+
+Outputs the *name* of a color as `STRING`, ready to be wired into a prompt
+placeholder. The node shows the selected color as a swatch; clicking it opens a
+palette of 133 color names grouped by family (neutrals, browns, reds, pinks,
+oranges and yellows, greens, cyans and teals, blues, purples, metallics, hair
+colors).
+Hovering an entry shows its name, a click selects it.
+
+*Any color → nearest name* at the bottom of the palette opens the browser's
+color picker; the chosen color is mapped to the palette entry that looks
+closest (CIE76 distance in L\*a\*b\*), e.g. `#1A2B8C` becomes `midnight blue`.
+Hair colors are not candidates there.
+
+The *Hair colors* group (`blonde hair`, `strawberry blonde hair`, `dark brown hair`,
+`brunette hair`, `red hair`, `auburn hair`, `silver hair`, ...) outputs names that
+always end in `hair`, so the prompt says it is hair and not clothing. Write the
+placeholder without the word: `she has long {{hair}}, ...`.
+
+The stored value is the name itself, kept in the `color` combo, so it stays
+readable in the workflow, can also be picked from the searchable dropdown, and
+API clients can send a name directly.
+
+### Notes
+
+* The palette is defined once in
+  [b24nodes/nodes/color_picker.py](b24nodes/nodes/color_picker.py) and served to
+  the frontend as `GET /api/b24nodes/colors`. Add or rename entries there.
+* Picking from the palette is recorded by undo/redo and marks the workflow as
+  modified.
+
+### Compatibility
+
+Verified against ComfyUI frontend `1.58.5` (swatch, palette popup with hover
+preview, nearest name mapping, closing on Escape and outside click, undo,
+workflow round trip and execution).
+
+## Multi Lora Loader
+
+Applies a list of LoRAs to a `MODEL` and a `CLIP` in one node, instead of a
+chain of *Load LoRA* nodes. `model` and `clip` are both optional.
+
+Every LoRA is one compact row: a switch, the LoRA, its strength and a ✕ to
+remove it. *+ Add LoRA* appends a row. Rows are applied top to bottom; switched
+off rows, empty rows and rows with strength `0` are skipped. The strength is
+used for the model and the CLIP and may be negative.
+
+Clicking a LoRA opens a searchable picker (type to filter, arrow keys and Enter
+to choose, Escape to close).
+
+### Filter by base model
+
+The dropdown above the rows limits the picker to LoRAs trained for one base
+model, e.g. `SDXL (12)`. The base model is read from the safetensors header:
+`modelspec.architecture` first, then `ss_base_model_version`, then the file name
+(`..._krea2_v1.safetensors`). Spellings are merged, so `krea2`, `krea2/lora` and
+`Krea-2/lora` all count as *Krea 2*; a base model the pack does not know keeps
+the name the file gives it.
+
+Pony and Illustrious are told apart from SDXL, although their LoRAs all say
+`sdxl`. For a LoRA that is labelled SDXL (or not labelled at all) the pack looks
+for, in this order of reliability:
+
+1. a `score_9` tag in the training tags (Pony only),
+2. the training checkpoint (`ss_sd_model_name`) and the title, e.g.
+   `ponyDiffusionV6XL`, `illustriousXL`, `noobaiXL`,
+3. the file name: `pony`, `pdxl`, `illustrious` or a standalone `IL` (`_IL`, ` IL`).
+
+The first source that names exactly one of the two decides. A source that names
+both (`..._pony_IL`) is a conflict, and the LoRA stays plain SDXL. NoobAI counts
+as Illustrious. A LoRA with no clear hint stays *SDXL*, which therefore means
+"SDXL, variant not recognised". Under a *Pony* or *Illustrious* filter the picker
+lists only that variant; a checkbox adds the plain SDXL LoRAs for the ones that
+carry no hint.
+
+* LoRAs whose base model can not be told are shown under every filter and marked
+  with `?`, so nothing disappears. *All base models* shows everything.
+* A row whose LoRA belongs to a different base model than the filter gets an
+  amber border. Plain SDXL under *Pony* or *Illustrious* does not, it is only
+  not known to fit.
+* The filter is a property of the node and is stored with the workflow. It only
+  limits the picker; it never changes which LoRAs are applied.
+* In a folder of several hundred LoRAs, nearly all were recognised, most of them
+  from the header and the rest by file name.
+
+The rows are plain DOM elements, no custom canvas drawing, so the node looks and
+works the same with and without *Nodes 2.0*.
+
+### Notes
+
+* The rows are stored as JSON in a hidden `loras` string widget, e.g.
+  `[{"on": true, "lora": "style.safetensors", "strength": 0.8}]`. API clients can
+  send that string directly.
+* One strength drives model and CLIP. Separate strengths would need a second
+  number per row.
+* A LoRA that no longer exists stays visible in its row and fails when the
+  workflow runs, with the file name in the error.
+* The list of LoRAs and their base models comes from `GET /api/b24nodes/loras`.
+  Headers are read once per file and cached until the file changes (about two
+  seconds for several hundred files on first use).
+* Verified against ComfyUI frontend `1.58.5`, in the classic canvas and with
+  Nodes 2.0: adding, removing and switching rows, the picker with search and
+  filter, workflow round trip, and that only the `loras` string reaches the
+  server. Applying LoRAs is covered by unit tests with stand-ins for the
+  ComfyUI loader, not by a run with a real model.
+
 ## Installation
 
 Clone the pack into the ComfyUI `custom_nodes` folder and restart ComfyUI:
@@ -203,30 +399,43 @@ already ships (torch, numpy, Pillow, aiohttp).
 __init__.py                       node mappings + WEB_DIRECTORY for ComfyUI
 b24nodes/
 ├── __init__.py                   NODE_CLASS_MAPPINGS / display names
-├── paths.py                      safe browsing of the input directory
-├── routes.py                     /b24nodes/browse and /b24nodes/tree
+├── loras.py                      base model of a LoRA from its safetensors header
+├── paths.py                      safe browsing of the input directory, thumbnails
+├── routes.py                     /b24nodes/browse, /tree, /thumbnail, /colors and /loras
 └── nodes/
+    ├── color_picker.py           the Color Picker node and its palette
     ├── load_image_path.py        the Load Image Path node
+    ├── multi_lora_loader.py      the Multi Lora Loader node
+    ├── prompt_composer.py        the Prompt Composer node
     └── resolution_aspect_selector.py
                                   the Resolution Aspect Selector node
 web/
-├── b24_load_image_path.js        frontend extension (folder browser, preview)
+├── b24_color_picker.js           swatch and palette popup
+├── b24_load_image_path.js        frontend extension (folder browser, thumbnails, preview)
+├── b24_multi_lora_loader.js      compact LoRA rows and picker
+├── b24_prompt_composer.js        one input per template placeholder
 └── b24_resolution_aspect_selector.js
                                   greys out aspect_ratio while image is connected
 tests/
 ├── test_load_image_path.py       runs without a ComfyUI installation
+├── test_loras.py                 base model detection
+├── test_multi_lora_loader.py     Multi Lora Loader with stand-ins for the loader
+├── test_prompt_composer.py       Prompt Composer and Color Picker
 └── test_resolution_aspect_selector.py
 ```
 
 ### HTTP API
 
-The frontend extension uses two read only routes that ComfyUI serves under the
+The frontend extensions use five read only routes that ComfyUI serves under the
 `/api` prefix as well:
 
 | Route | Response |
 | --- | --- |
 | `GET /api/b24nodes/tree` | `{"folders": ["portraits", "portraits/2024"], "truncated": false, "limit": 2000}` |
 | `GET /api/b24nodes/browse?folder=portraits` | `{"folder": "portraits", "parent": "", "exists": true, "folders": ["2024"], "images": ["shot_01.png"]}` |
+| `GET /api/b24nodes/thumbnail?folder=portraits&image=shot_01.png` | WEBP image, at most 256 pixels on the longest side; `404` for a missing file, `415` for one that can not be decoded |
+| `GET /api/b24nodes/colors` | `{"groups": [{"name": "Neutrals", "colors": [{"name": "white", "hex": "#FFFFFF"}, ...]}, ...]}` |
+| `GET /api/b24nodes/loras` | `{"loras": [{"name": "style.safetensors", "base": "Krea 2"}, {"name": "other.safetensors", "base": null}, ...], "parents": {"Pony": "SDXL", "Illustrious": "SDXL"}}` |
 
 ### Tests
 
